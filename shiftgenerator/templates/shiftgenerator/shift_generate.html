@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shift Generator</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .shift-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .shift-table th, .shift-table td {
+            border: 1px solid #dee2e6;
+            padding: 8px;
+            text-align: center;
+        }
+        .shift-table th {
+            background-color: #f8f9fa;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <h1 class="mb-4">Shift Generator</h1>
+
+        <form id="shiftForm" method="post" action="{% url 'shiftgenerator:shift-generate' %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-primary btn-lg">Generate Shift</button>
+        </form>
+
+        <!-- Shift Table -->
+        <div id="resultsContainer" class="mt-5">
+            {% if results %}
+                <table class="shift-table">
+                  <thead>
+                    <tr>
+                        <th>スタッフID</th>
+                        <th>スタッフ名</th>
+                        <th>曜日</th>
+                        <th>希望開始時間</th>
+                        <th>希望終了時間</th>
+                        <th>予測されたシフトアサインメント</th>
+                        <th>予測された開始時間</th>
+                        <th>予測された終了時間</th>
+                        <th>予測された勤務時間</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for row in results %}
+                        <tr>
+                          <td>{{ row.スタッフID }}</td>
+                          <td>{{ row.スタッフ名 }}</td>
+                          <td>{{ row.曜日 }}</td>
+                          <td>{{ row.希望開始時間 }}</td>
+                          <td>{{ row.希望終了時間 }}</td>
+                          <td>{{ row.予測されたシフトアサインメント }}</td>
+                          <td>{{ row.予測された開始時間 }}</td>
+                          <td>{{ row.予測された終了時間 }}</td>
+                          <td>{{ row.予測された勤務時間 }}</td>
+                        </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+            {% else %}
+                <p class="alert alert-info">シフト結果がまだ生成されていません。</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Bootstrap JS and its dependencies -->
+    <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.5.3/dist/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+
+    <script>
+        $(document).ready(function() {
+            $('#shiftForm').on('submit', function(e) {
+                e.preventDefault();
+                $.ajax({
+                    url: $(this).attr('action'),
+                    type: 'POST',
+                    data: $(this).serialize(),
+                    success: function(response) {
+                        $('#resultsContainer').html(response);
+                    },
+                    error: function() {
+                        $('#resultsContainer').html('<p class="text-danger">エラーが発生しました。もう一度お試しください。</p>');
+                    }
+                });
+            });
+        });
+    </script>
+</body>
+</html>

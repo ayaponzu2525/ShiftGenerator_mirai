@@ -1,0 +1,23 @@
+
+{% extends "base.html" %}
+
+{% block content %}
+  <h2>新規ユーザー登録</h2>
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    {% if form.errors %}
+      <div class="error-messages">
+        {% for field in form %}
+          {% for error in field.errors %}
+            <p class="error-message">{{ field.label }}: {{ error }}</p>
+          {% endfor %}
+        {% endfor %}
+        {% for error in form.non_field_errors %}
+          <p class="error-message">{{ error }}</p>
+        {% endfor %}
+      </div>
+    {% endif %}
+    <button type="submit">登録</button>
+  </form>
+{% endblock %}

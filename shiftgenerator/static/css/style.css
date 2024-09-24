@@ -1,0 +1,43 @@
+.calendar-container {
+    display: flex;
+    flex-direction: row;
+  }
+  
+  .staff-list {
+    flex: 1;
+    background-color: #f0f8ff; /* 水色の背景 */
+    padding: 10px;
+    border-radius: 8px; /* 角を落とす */
+  }
+  
+  .calendar {
+    flex: 3;
+    background-color: #ffffff; /* 白の背景 */
+    padding: 10px;
+    border-radius: 8px; /* 角を落とす */
+  }
+  
+  .staff-header, .calendar-header {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    background-color: #e0f7fa; /* 水色のヘッダー背景 */
+    padding: 5px;
+    border-radius: 8px; /* 角を落とす */
+  }
+  
+  .staff-name, .calendar-day {
+    text-align: center;
+    padding: 5px;
+  }
+  
+  .calendar-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  }
+  
+  .calendar-cell {
+    text-align: center;
+    padding: 5px;
+    border: 1px solid #d0e9f4; /* 薄い水色の枠線 */
+  }
+  

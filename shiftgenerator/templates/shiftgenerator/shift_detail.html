@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>シフト詳細</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa; /* 背景色を淡いグレーに */
+        }
+        .container {
+            background-color: #ffffff; /* 背景色を白に */
+            border-radius: 8px; /* 角を丸くする */
+            padding: 30px; /* 内部余白を設定 */
+            margin-top: 50px; /* 上部余白を設定 */
+            margin-left: auto;
+            margin-right: auto;
+            max-width: 600px; /* 最大幅を設定 */
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); /* シャドウを追加 */
+        }
+        .btn-primary {
+            background-color: #007bff; /* 水色の背景 */
+            border-color: #007bff; /* 水色の境界線 */
+            font-size: 18px; /* ボタンの文字サイズ */
+            padding: 10px 20px; /* ボタンの内部余白 */
+        }
+        .btn-primary:hover {
+            background-color: #0056b3; /* ホバー時の色 */
+            border-color: #004085; /* ホバー時の境界線色 */
+        }
+        h1 {
+            color: #007bff; /* 水色のタイトル */
+            font-size: 2.5rem; /* タイトルの文字サイズ */
+            margin-bottom: 20px; /* 下部余白 */
+            text-align: center; /* 中央揃え */
+        }
+        table {
+            margin-bottom: 20px; /* テーブル下部の余白 */
+        }
+        th, td {
+            text-align: center; /* テーブルのセル内での中央揃え */
+            vertical-align: middle; /* セル内での垂直中央揃え */
+        }
+        th {
+            background-color: #e9ecef; /* ヘッダーの背景色 */
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>シフト詳細</h1>
+        <table class="table table-bordered">
+            <tbody>
+                <tr>
+                    <th>スタッフ</th>
+                    <td>{{ shift.staff.name }}</td>
+                </tr>
+                <tr>
+                    <th>日付</th>
+                    <td>{{ shift.date }}</td>
+                </tr>
+                <tr>
+                    <th>開始時間</th>
+                    <td>{{ shift.starttime }}</td>
+                </tr>
+                <tr>
+                    <th>終了時間</th>
+                    <td>{{ shift.endtime }}</td>
+                </tr>
+                <tr>
+                    <th>曜日</th>
+                    <td>{{ shift.day_of_week.day_name }}</td>
+                </tr>
+            </tbody>
+        </table>
+        <form method="post" action="{% url 'shiftgenerator:shift-detail' shift.id %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-primary">削除</button>
+        </form>
+    </div>
+
+    <!-- Bootstrap JS and dependencies (optional) -->
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.5.3/dist/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+</body>
+</html>

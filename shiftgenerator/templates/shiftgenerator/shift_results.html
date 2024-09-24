@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shift Results</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-5">
+        <h2 class="mb-4">Shift Results</h2>
+        {% if results %}
+            <div class="table-responsive">
+                <table class="table table-striped table-bordered">
+                    <thead class="thead-dark">
+                        <tr>
+                            <th>スタッフID</th>
+                            <th>スタッフ名</th>
+                            <th>曜日</th>
+                            <th>希望開始時間</th>
+                            <th>希望終了時間</th>
+                            <th>予測されたシフトアサインメント</th>
+                            <th>予測された開始時間</th>
+                            <th>予測された終了時間</th>
+                            <th>予測された勤務時間</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for result in results %}
+                            <tr>
+                                <td>{{ result.スタッフID }}</td>
+                                <td>{{ result.スタッフ名 }}</td>
+                                <td>{{ result.曜日 }}</td>
+                                <td>{{ result.希望開始時間 }}</td>
+                                <td>{{ result.希望終了時間 }}</td>
+                                <td>{{ result.予測されたシフトアサインメント }}</td>
+                                <td>{{ result.予測された開始時間 }}</td>
+                                <td>{{ result.予測された終了時間 }}</td>
+                                <td>{{ result.予測された勤務時間 }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <p class="alert alert-warning">結果がありません。シフトを生成してください。</p>
+        {% endif %}
+        
+        <a href="{% url 'shiftgenerator:shift-generate' %}" class="btn btn-primary mt-3">新しいシフトを生成</a>
+    </div>
+
+    <!-- Bootstrap JS and its dependencies -->
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.5.3/dist/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+</body>
+</html>

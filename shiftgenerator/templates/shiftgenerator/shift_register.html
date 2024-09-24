@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>シフト新規登録</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-5">
+        <h2 class="mb-4">シフト新規登録</h2>
+        <!-- 選択された日付の表示 -->
+        <div class="alert alert-info">
+            選択された日付: {{ date }}
+        </div>
+        <div class="alert alert-info">
+            スタッフ名: {{ staff_name }} <br>
+            ユーザー名: {{ username }}
+        </div>
+        <form method="POST" action="{% url 'shiftgenerator:new-register-shift' %}">
+            {% csrf_token %}
+            <div class="form-group">
+                <label for="start-time">開始時間:</label>
+                <select id="start-time" name="start_time" class="form-control">
+                    {% for time in time_slots %}
+                        <option value="{{ time }}">{{ time }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="end-time">終了時間:</label>
+                <select id="end-time" name="end_time" class="form-control">
+                    {% for time in time_slots %}
+                        <option value="{{ time }}">{{ time }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <input type="hidden" name="date" value="{{ date }}">
+            <button type="submit" class="btn btn-primary">登録</button>
+        </form>
+    </div>
+    <script>
+        document.querySelector('form').addEventListener('submit', function(event) {
+            var startTime = document.getElementById('start-time').value;
+            var endTime = document.getElementById('end-time').value;
+            var selectedDate = document.querySelector('input[name="date"]').value;
+    
+            console.log(`Date: ${selectedDate}, Start Time: ${startTime}, End Time: ${endTime}`);
+        });
+    </script>
+</body>
+</html>

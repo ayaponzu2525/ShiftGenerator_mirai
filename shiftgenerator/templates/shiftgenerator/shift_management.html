@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <link href="https://unpkg.com/vis-timeline/standalone/umd/vis-timeline-graph2d.min.css" rel="stylesheet" type="text/css">
+  <script src="https://unpkg.com/vis-timeline/standalone/umd/vis-timeline-graph2d.min.js"></script>
+  <style>
+    #timeline {
+      width: 100%;
+      height: 600px;
+    }
+  </style>
+</head>
+<body>
+  <div id="timeline"></div>
+  <button id="saveChangesBtn">保存</button>
+
+  <button id="copyShiftsBtn">現在のシフト希望をもう一度反映（調整しているのが消えます）</button>
+  <script>
+
+
+    // グループデータ（スタッフ）
+    var groups = new vis.DataSet([
+      {% for staff in staff %}
+        {id: {{ staff.id }}, content: '{{ staff.name }}'},
+      {% endfor %}
+    ]);
+
+    // アイテムデータ（シフト）
+    var items = new vis.DataSet([
+        {% for preference in preferences %}
+        {
+            id: {{ preference.id }},
+            content: 'Shift {{ preference.id }}',
+            start: '{{ preference.confirmed_starttime|date:"Y-m-d\\TH:i:s" }}',
+            end: '{{ preference.confirmed_endtime|date:"Y-m-d\\TH:i:s" }}',
+            group: {{ preference.staff.id }}
+        },
+        {% endfor %}
+    ]);
+
+    // データ確認
+    console.log('Groups:', groups.get());
+    console.log('Items:', items.get());
+    
+    //変更を一時的に保存する配列
+    let changes = {};
+
+    // タスクバーが変更されたとき
+    function onTaskBarChanged(action, item) {
+        const id = item.id;
+
+        if (changes[id]) {
+            if (action === 'remove') {
+                delete changes[id];
+            }
+        }
+
+        changes[id] = {
+            action: action,
+            item: item
+        };
+
+        console.log(changes);
+    }
+
+
+    // オプション設定
+    var options = {
+        stack: false,
+        showCurrentTime: true,
+        groupOrder: 'content',
+        orientation: 'top', // 横軸を上に表示
+        horizontalScroll: true,
+        editable: {
+            add: true,
+            updateTime: true,
+            updateGroup: true,
+            remove: true,
+            overrideItems: false
+        },
+        // onAdd
+        onAdd: function (item, callback) {
+        console.log('Item to be added:', item);
+        onTaskBarChanged('add', item);
+        callback(item);
+        },
+        onUpdate: function (item, callback) {
+            item.content = prompt('Edit item text:', item.content);
+            if (item.content != null) {
+                onTaskBarChanged('update', item);
+                callback(item);
+            } else {
+                callback(null);
+            }
+        },
+        onMove: function (item, callback) {
+            console.log('Item moved:', item);
+            onTaskBarChanged('move', item);
+            callback(item);
+        },
+        onRemove: function (item, callback) {
+            var confirmDelete = confirm('Are you sure you want to delete this item?');
+            if (confirmDelete) {
+                onTaskBarChanged('remove', item);
+                callback(item);
+            } else {
+                callback(null);
+            }
+        }
+
+    };
+
+var container = document.getElementById('timeline');
+var timeline = new vis.Timeline(container, items, groups, options);
+
+
+document.getElementById('saveChangesBtn').addEventListener('click', function() {
+  // 変更がない場合は何もしない
+  if (changes.length === 0) {
+    alert('変更はありません。');
+    return;
+  }
+
+  // 変更をサーバーに送信
+  fetch('{% url "shiftgenerator:save-shifts" %}', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': '{{ csrf_token }}'
+    },
+    body: JSON.stringify({ changes: changes })
+  })
+  .then(response => response.json())
+  .then(data => {
+    if (data.success) {
+      alert('変更が保存されました！');
+      changes = {}; //更新履歴をリセット
+      window.location.reload(); // 保存後にリロードして反映
+    } else {
+      alert('保存に失敗しました。');
+    }
+  });
+});
+
+
+     // ボタンクリックでシフト時間をコピーする
+     
+    document.getElementById('copyShiftsBtn').addEventListener('click', function() {
+        // ユーザーに確認のダイアログを表示
+        var userConfirmed = confirm('今調整してるやつ消えるけどほんまにええ？');
+        
+        if (userConfirmed) {
+        // ユーザーがOKをクリックした場合にのみ、シフト時間をコピー
+        fetch('{% url "shiftgenerator:copy-shifts" %}', {
+            method: 'POST',
+            headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: JSON.stringify({})
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+            alert('今のシフト希望反映したで!');
+            window.location.href = "{% url 'shiftgenerator:shift-management' %}"; // 成功したら遷移
+            } else {
+            alert('シフト希望反映に失敗してもうたわ.');
+            }
+        });
+        } else {
+        // ユーザーがキャンセルした場合
+        alert('調整続けるんやながんばりや！');
+        }
+    });
+
+
+    // Ctrlキーを押している間だけズームを有効にする設定
+    let ctrlPressed = false;
+
+    // Ctrlキーが押されたとき
+    document.addEventListener('keydown', function(event) {
+      if (event.ctrlKey) {
+        ctrlPressed = true;
+        timeline.setOptions({ zoomable: true }); // ズームを有効にする
+      }
+    });
+
+    // Ctrlキーが離されたとき
+    document.addEventListener('keyup', function(event) {
+      if (!event.ctrlKey) {
+        ctrlPressed = false;
+        timeline.setOptions({ zoomable: false }); // ズームを無効にする
+      }
+    });
+
+    // ズーム機能を手動で有効にするトグル
+    timeline.on('rangechange', function () {
+      if (!ctrlPressed) {
+        timeline.setOptions({ zoomable: false });
+      }
+    });
+
+
+    // タイムラインのクリックイベントを追加（オプション）
+    timeline.on('click', function (properties) {
+      console.log('Clicked on:', properties);
+    });
+  </script>
+</body>
+</html>

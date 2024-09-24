@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="container mt-5">
+    <h2 class="text-center mb-4">ホーム</h2>
+    <div class="row justify-content-center">
+      <div class="col-md-4">
+    
+        <a href="{% url 'shiftgenerator:login' %}" class="btn btn-secondary btn-block mb-3">ログイン</a>
+        <a href="{% url 'shiftgenerator:shift-generate' %}" class="btn btn-success btn-block">シフト生成</a>
+        <a href="{% url 'shiftgenerator:shift-management' %}" class="btn btn-primary btn-block mt-3">シフト管理画面</a>      
+
+      </div>
+    </div>
+  </div>
+{% endblock content %}

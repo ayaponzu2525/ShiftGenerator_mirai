@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>シフト希望入力</title>
+    <!-- FullCalendarのCSS -->
+    <link href="https://cdn.jsdelivr.net/npm/fullcalendar@5.10.1/main.min.css" rel="stylesheet">
+    <!-- Bootstrap CSS -->
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .fc-daygrid-day {
+            position: relative;
+        }
+        .fc-daygrid-day button {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            z-index: 10;
+            padding: 5px 10px;
+            font-size: 0.75rem;
+        }
+        .fc-event-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 5px;
+        }
+                /* '登録' ボタンのスタイル */
+        .register-button {
+            background-color: #007bff; /* 固定の色を指定 */
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            margin: 5px;
+        }
+
+        /* 履歴ボタンのスタイル */
+        .history-button {
+            margin: 5px;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+        }
+
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <h2 class="mb-4">シフト希望カレンダー</h2>
+        <p>こんにちは, {{ user.username }}さん</p> <!-- ユーザー名の表示 -->
+        <p>こんにちは、staff : {{ name }}さん (カスタムユーザー: {{ username }})</p>
+        <div id="calendar" data-url="{% url 'shiftgenerator:shift-register' %}"></div>
+    </div>
+    {% if messages %}
+    <ul class="messages">
+        {% for message in messages %}
+        <li{% if message.tags %} class="{{ message.tags }}"{% endif %}>{{ message }}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+
+
+    <!-- モーダルウィンドウのHTML -->
+    <div class="modal fade" id="shiftModal" tabindex="-1" role="dialog" aria-labelledby="shiftModalLabel" aria-hidden="true">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="shiftModalLabel">シフト新規登録</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="dateDisplay">選択された日付:</label>
+                        <span id="dateDisplay"></span>
+                    </div>
+                    <input type="hidden" id="shiftId"> <!-- 隠しフィールドでシフトIDを保持 -->
+                    <div class="form-group">
+                        <label for="historyContainer">履歴から選択</label>
+                        <div id="historyContainer">
+                            <!-- 履歴のボタンがここに追加されます -->
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">キャンセル</button>
+                    <button type="button" class="btn btn-primary" id="registerButton">新規登録</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+  
+
+    <!-- FullCalendarのJSと依存関係 -->
+    <script src="https://cdn.jsdelivr.net/npm/fullcalendar@5.10.1/main.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.5.2/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+document.addEventListener('DOMContentLoaded', function() {
+    var calendarEl = document.getElementById('calendar');
+    var events = JSON.parse('{{ events|safe }}');  // Djangoから渡されたイベントデータをJSON形式で取得
+
+    var calendar = new FullCalendar.Calendar(calendarEl, {
+        initialView: 'dayGridMonth',
+        locale: 'ja',
+        events: events,
+        eventContent: function(arg) {
+            var startTime = formatTime(arg.event.extendedProps.starttime); 
+            var endTime = formatTime(arg.event.extendedProps.endtime); 
+            var timeRange = startTime + ' - ' + endTime;
+
+            var title = document.createElement('div');
+            title.innerHTML = `<div style="display: flex; align-items: center;">
+                <span class="fc-event-dot" style="background-color: ${arg.event.backgroundColor};"></span>
+                ${timeRange}
+            </div>`;
+
+            return { domNodes: [title] };
+        },
+        eventClick: function(info) {
+            var shiftId = info.event.id;
+            if (shiftId) {
+                var url = "/shift-detail/" + shiftId + "/";
+                window.location.href = url;
+            } else {
+                console.error('シフトIDが取得できませんでした');
+            }
+        },
+        dayCellDidMount: function(info) {
+            var date = new Date(info.date);
+            date.setHours(0, 0, 0, 0);
+            var dateStr = date.toISOString().split('T')[0];
+            var dateCorrected = new Date(date);
+            dateCorrected.setDate(date.getDate() + 1);
+            var dateStrCorrected = dateCorrected.toISOString().split('T')[0];
+
+            var button = document.createElement('button');
+            button.innerText = '登録';
+            button.className = 'btn btn-primary btn-sm';
+            button.onclick = function() {
+                window.selectedDate = dateStrCorrected; // ここで日付を設定
+                $('#shiftModal').modal('show');
+                document.getElementById('dateDisplay').textContent = dateStrCorrected;
+
+                fetch('/get-shift-history/')
+                    .then(response => response.json())
+                    .then(data => {
+                        const historyContainer = document.getElementById('historyContainer');
+                        historyContainer.innerHTML = '';
+
+                        data.forEach(history => {
+                            const historyButton = document.createElement('button');
+                            historyButton.className = 'btn btn-primary btn-sm';
+                            historyButton.style.marginRight = '10px'; // 隙間を開ける
+                            historyButton.style.marginBottom = '10px'; // 隙間を開ける
+                            historyButton.textContent = `${formatTime(history.starttime)} - ${formatTime(history.endtime)}`;
+                            historyButton.onclick = function() {
+                                registerShift(history.starttime, history.endtime, dateStrCorrected);
+                            };
+                            historyContainer.appendChild(historyButton);
+                        });
+                    })
+                    .catch(error => console.error('履歴取得エラー:', error));
+            };
+
+            info.el.appendChild(button);
+        }
+    });
+
+    function registerShift(starttime, endtime, date) {
+        fetch('/history-shift-register/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                starttime: starttime,
+                endtime: endtime,
+                date: date
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                $('#shiftModal').modal('hide'); // モーダルを閉じる
+                updateCalendar(); // カレンダーを更新する
+            } else {
+                alert('シフト登録に失敗しました');
+            }
+        })
+        .catch(error => console.error('シフト登録エラー:', error));
+    }
+
+    function formatTime(timeStr) {
+        var time = new Date('1970-01-01T' + timeStr);
+        return time.toTimeString().slice(0, 5);
+    }
+
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+
+    // Register Buttonがクリックされたときの処理
+    document.getElementById('registerButton').addEventListener('click', function() {
+        var date = window.selectedDate; // グローバル変数から日付を取得
+        if (!date) {
+            console.error('日付が設定されていません');
+            return;
+        }
+        var registerUrl = document.getElementById('calendar').getAttribute('data-url');
+        var newRegisterUrl = `${registerUrl}?date=${encodeURIComponent(date)}`;
+        window.location.href = newRegisterUrl; // shift_register.html に遷移
+    });
+
+
+    function updateCalendar() {
+        fetch('/get-updated-events/')  // 新しいエンドポイントを作成
+            .then(response => response.json())
+            .then(updatedEvents => {
+                calendar.removeAllEvents();  // 既存のイベントをすべて削除
+                calendar.addEventSource(updatedEvents);  // 新しいイベントを追加
+            })
+            .catch(error => console.error('カレンダー更新エラー:', error));
+    }
+
+    calendar.render();
+});
+
+
+    </script>
+</body>
+</html>

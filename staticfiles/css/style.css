@@ -1,0 +1,64 @@
+/* 全体のスタイル */
+body {
+    font-family: Arial, sans-serif;
+    background-color: #e0f7fa; /* 背景を淡い水色に */
+    margin: 0;
+    padding: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    flex-direction: column;
+  }
+  
+  /* コンテナ */
+  .container {
+    text-align: center;
+  }
+  
+  /* ボタンのスタイル */
+  #generateShift {
+    background-color: #00acc1; /* 水色 */
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    font-size: 16px;
+    cursor: pointer;
+    border-radius: 5px;
+    margin-bottom: 20px;
+  }
+  
+  #generateShift:hover {
+    background-color: #007c91; /* 濃い水色 */
+  }
+  
+  /* カレンダーの基本スタイル */
+  .calendar {
+    display: grid;
+    grid-template-columns: repeat(32, 1fr); /* 1列目（スタッフ名） + 30列（日付） */
+    gap: 1px;
+    background-color: #ddd;
+    max-width: 100vw; /* カレンダーが画面幅に収まるように */
+  }
+  
+  /* 各セルのスタイル */
+  .calendar div {
+    padding: 10px;
+    background-color: white; /* 白い背景 */
+    text-align: center;
+    border: 1px solid #ddd;
+  }
+  
+  /* スタッフの列を縦に表示 */
+  .staff {
+    grid-column: 1;
+    background-color: #b2ebf2; /* 水色 */
+    font-weight: bold;
+  }
+  
+  /* カレンダーのヘッダー（日付） */
+  .header {
+    font-weight: bold;
+    background-color: #80deea; /* ヘッダー部分の水色 */
+  }
+  

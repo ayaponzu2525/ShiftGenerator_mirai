@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <link href="https://unpkg.com/vis-timeline/standalone/umd/vis-timeline-graph2d.min.css" rel="stylesheet" type="text/css">
+  <script src="https://unpkg.com/vis-timeline/standalone/umd/vis-timeline-graph2d.min.js"></script>
+  <style>
+    #timeline {
+      width: 100%;
+      height: 600px;
+    }
+  </style>
+</head>
+<body>
+  <div id="timeline"></div>
+  <button id="copyShiftsBtn">現時点でのシフト希望で調整する</button>
+  <script>
+    var container = document.getElementById('timeline');
+
+    // グループデータ（スタッフ）
+    var groups = new vis.DataSet([
+      {% for staff in staff %}
+        {id: {{ staff.id }}, content: '{{ staff.name }}'},
+      {% endfor %}
+    ]);
+
+    // アイテムデータ（シフト）
+    var items = new vis.DataSet([
+        {% for preference in preferences %}
+        {
+            id: {{ preference.id }},
+            content: 'Shift {{ preference.id }}',
+            start: '{{ preference.starttime|date:"Y-m-d\\TH:i:s" }}',
+            end: '{{ preference.endtime|date:"Y-m-d\\TH:i:s" }}',
+            group: {{ preference.staff.id }}
+        },
+        {% endfor %}
+    ]);
+
+    // データ確認
+    console.log('Groups:', groups.get());
+    console.log('Items:', items.get());
+    // オプション設定
+    var options = {
+      stack: true,
+      showCurrentTime: true,
+      groupOrder: 'content',
+      editable: false,
+      start: new Date('2024-09-18'),
+      end: new Date('2024-09-25'),
+      zoomMin: 1000 * 60 * 15, // ズームの最小単位（15分）
+      zoomMax: 1000 * 60 * 60 * 24 * 30, // ズームの最大単位（30日）
+      horizontalScroll: true, // 水平スクロールを有効にする
+      orientation: 'top', // 横軸を上に表示
+      zoomable: true // 初期状態でズームを有効にする
+    //   min: new Date().setHours(8, 30, 0, 0), // 現在の日付の8:30に設定
+    //   max: new Date().setHours(20, 0, 0, 0), // 現在の日付の20:00に設定
+    };
+
+    var timeline = new vis.Timeline(container, items, groups, options);
+
+     // ボタンクリックでシフト時間をコピーする
+     document.getElementById('copyShiftsBtn').addEventListener('click', function() {
+      fetch('{% url "shiftgenerator:copy-shifts" %}', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': '{{ csrf_token }}'
+        },
+        body: JSON.stringify({})
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          alert('Shift times copied successfully!');
+          window.location.href = "{% url 'shiftgenerator:shift-management' %}"; // 成功したら遷移
+        } else {
+          alert('Failed to copy shift times.');
+        }
+      });
+    });
+    // Ctrlキーを押している間だけズームを有効にする設定
+    let ctrlPressed = false;
+
+    // Ctrlキーが押されたとき
+    document.addEventListener('keydown', function(event) {
+      if (event.ctrlKey) {
+        ctrlPressed = true;
+        timeline.setOptions({ zoomable: true }); // ズームを有効にする
+      }
+    });
+
+    // Ctrlキーが離されたとき
+    document.addEventListener('keyup', function(event) {
+      if (!event.ctrlKey) {
+        ctrlPressed = false;
+        timeline.setOptions({ zoomable: false }); // ズームを無効にする
+      }
+    });
+
+    // ズーム機能を手動で有効にするトグル
+    timeline.on('rangechange', function () {
+      if (!ctrlPressed) {
+        timeline.setOptions({ zoomable: false });
+      }
+    });
+
+  </script>
+</body>
+</html>

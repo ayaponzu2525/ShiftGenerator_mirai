@@ -1,0 +1,36 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<!-- スタッフ名とシフト -->
+<div class="calendar">
+  <!-- 日付のヘッダー -->
+  <div class="header"></div> <!-- 左上の空白部分 -->
+  {% for day in days %}
+  <div class="header">9月{{ day }}日</div>
+  {% endfor %}
+
+  <!-- スタッフA -->
+  <div class="staff">スタッフA</div>
+  <div>{{ event_a }}</div>
+  <div id="event_e_A"></div>
+  {% for i in days %}
+    <div></div>
+  {% endfor %}
+
+  <!-- スタッフB -->
+  <div class="staff">スタッフB</div>
+  <div>{{ event_b }}</div>
+  <div id="event_f_B"></div>
+  {% for i in days %}
+    <div></div>
+  {% endfor %}
+
+  <!-- スタッフC -->
+  <div class="staff">スタッフC</div>
+  <div>{{ event_c }}</div>
+  <div id="event_g_C"></div>
+  {% for i in days %}
+    <div></div>
+  {% endfor %}
+</div>
+{% endblock content %}
