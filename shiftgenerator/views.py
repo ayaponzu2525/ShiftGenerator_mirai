@@ -37,14 +37,13 @@ def index(request):
 def save_shifts(request):
     if request.method == 'POST':
         data = json.loads(request.body)
-        changes = data.get('changes', {})
+        changes = data.get('changes', [])
 
         # デバッグのために `changes` を出力
         print("Received changes:", changes)
 
-        # `changes.items()` を使ってシフトIDと変更内容を取得
-        for shift_id, change in changes.items():
-            print("Processing change for shift_id:", shift_id)
+        # `changes`をリストとしてループ処理
+        for change in changes:
             action = change['action']
             item = change['item']
 
@@ -126,19 +125,15 @@ def shift_management_view(request):
     # スタッフデータを取得
     staff = Staff.objects.all()
 
-    print(preferences[0].starttime)
     # シフト開始・終了時間を日付と組み合わせる
     for preference in preferences:
-        # データベースから取得した時間を使用する
-        start_time = preference.starttime  # ここにデータベースからの時間を代入
-        end_time = preference.endtime      # 同様に
+        # starttime または endtime が None の場合はスキップ
+        if preference.starttime and preference.endtime:
+            # date フィールドと時間を組み合わせて confirmed_starttime を作成
+            preference.starttime = datetime.combine(preference.date, preference.starttime)
+            # date フィールドと時間を組み合わせて confirmed_endtime を作成
+            preference.endtime = datetime.combine(preference.date, preference.endtime)
 
-        # date フィールドと時間を組み合わせて confirmed_starttime を作成
-        preference.starttime = datetime.combine(preference.date, start_time)
-        # date フィールドと時間を組み合わせて confirmed_endtime を作成
-        preference.endtime = datetime.combine(preference.date, end_time)
-
-    print(preferences[0].starttime)
     # コンテキストにデータを渡す
     context = {
         'preferences': preferences,
@@ -175,7 +170,6 @@ def shift_management(request):
 
 
 @login_required
-
 def shift_form(request):
     user = request.user
     staff_profile = getattr(user, 'staff_profile', None)
@@ -192,15 +186,17 @@ def shift_form(request):
     # データをJSON形式に変換
     events = []
     for shift in shifts:
-        events.append({
-            'title': f'{shift.starttime.strftime("%H:%M")} - {shift.endtime.strftime("%H:%M")}',
-            'id': shift.id,
-            'start': f'{shift.date}T{shift.starttime.strftime("%H:%M:%S")}',
-            'end': f'{shift.date}T{shift.endtime.strftime("%H:%M:%S")}',
-            'starttime': shift.starttime.strftime("%H:%M"),
-            'endtime': shift.endtime.strftime("%H:%M"),
-            'backgroundColor': 'blue'
-        })
+        # starttime と endtime が None の場合はスキップ
+        if shift.starttime and shift.endtime:
+            events.append({
+                'title': f'{shift.starttime.strftime("%H:%M")} - {shift.endtime.strftime("%H:%M")}',
+                'id': shift.id,
+                'start': f'{shift.date}T{shift.starttime.strftime("%H:%M:%S")}',
+                'end': f'{shift.date}T{shift.endtime.strftime("%H:%M:%S")}',
+                'starttime': shift.starttime.strftime("%H:%M"),
+                'endtime': shift.endtime.strftime("%H:%M"),
+                'backgroundColor': 'blue'
+            })
 
     history_list = [{'start': h.starttime.strftime("%H:%M"), 'end': h.endtime.strftime("%H:%M")} for h in history]
 

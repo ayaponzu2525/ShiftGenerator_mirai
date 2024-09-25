@@ -42,25 +42,56 @@
     console.log('Groups:', groups.get());
     console.log('Items:', items.get());
     
-    //変更を一時的に保存する配列
-    let changes = {};
+    //変更を保存する配列
+    let changes = [];  // 配列で管理
 
-    // タスクバーが変更されたとき
     function onTaskBarChanged(action, item) {
+        // id は null にする
         const id = item.id;
 
-        if (changes[id]) {
-            if (action === 'remove') {
-                delete changes[id];
-            }
+        if (action === 'remove') {
+
+          // remove の場合は該当アイテムを削除
+        const existingAddIndex = changes.findIndex(change => change.action === 'add' && change.item.id === item.id);
+
+        if (existingAddIndex >= 0) {
+            // 対象となる id が add アクションの場合は、そのアイテムを削除して何もしない
+            changes.splice(existingAddIndex, 1);  // add アクションを削除
+            console.log('Current changes:', changes);
+            return;  // 何もしない
+        }
+            // remove の場合は該当アイテムを削除
+            changes = changes.filter(change => change.item.id !== item.id);
+            console.log('Current changes:', changes);
+            
+            // remove アクションを追加
+            changes.push({ action: 'remove', item: item });
+            return;  // 追加後は処理を終了
         }
 
-        changes[id] = {
-            action: action,
-            item: item
-        };
+        if (action === 'add'){
+          // UUIDを除外した新しいオブジェクトを作成
+          const { id, ...itemWithoutUUID } = item;  // id (UUID) を除去した新しいオブジェクトを生成
+          
+          // changesに保存する直前に UUID 以外の情報を登録
+          changes.push({ action: 'add', item: itemWithoutUUID});  // UUIDを除外したアイテムを渡す
+          console.log('Current changes:', changes);
+          save_shifts();
+          return;
+        }
 
-        console.log(changes);
+        // 既存のエントリがあるかチェック
+        const existingIndex = changes.findIndex(change => change.item.id === item.id);
+
+        if (existingIndex >= 0) {
+            // 既に存在している場合は上書き
+            changes[existingIndex] = { action: action, item: item };
+        } else {
+            // 新しいエントリを追加
+            changes.push({ action: action, item: item });
+        }
+
+        console.log('Current changes:', changes);
     }
 
 
@@ -115,10 +146,14 @@ var timeline = new vis.Timeline(container, items, groups, options);
 
 
 document.getElementById('saveChangesBtn').addEventListener('click', function() {
+  save_shifts();
+});
+
+function save_shifts(){
   // 変更がない場合は何もしない
   if (changes.length === 0) {
-    alert('変更はありません。');
-    return;
+      alert('変更はありません。');
+      return;
   }
 
   // 変更をサーバーに送信
@@ -134,13 +169,14 @@ document.getElementById('saveChangesBtn').addEventListener('click', function() {
   .then(data => {
     if (data.success) {
       alert('変更が保存されました！');
-      changes = {}; //更新履歴をリセット
+      changes = []; //更新履歴をリセット
       window.location.reload(); // 保存後にリロードして反映
     } else {
       alert('保存に失敗しました。');
     }
   });
-});
+}
+
 
 
      // ボタンクリックでシフト時間をコピーする
