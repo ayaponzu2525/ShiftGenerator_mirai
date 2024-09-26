@@ -131,35 +131,34 @@ class DayOfWeek(models.Model):
         return self.day_name
 
 class Holiday(models.Model):
-    HOLIDAY_CHOICES = [
-        ('休み', '休み'),
-        ('未定', '未定'),
-        ('学校関連', '学校関連'),
-    ]
-
-    name = models.CharField(max_length=10, choices=HOLIDAY_CHOICES)
-
-    def __str__(self):
-        return self.name
-
-class ShiftPreference(models.Model):
     id = models.AutoField(primary_key=True)
-    staff = models.ForeignKey(Staff, on_delete=models.CASCADE)
-    date = models.DateField()
-    starttime = models.TimeField(null=True)
-    endtime = models.TimeField(null=True)
-    confirmed_starttime = models.TimeField(null=True, blank=True)
-    confirmed_endtime = models.TimeField(null=True, blank=True)
-    day_of_week = models.ForeignKey(DayOfWeek, on_delete=models.CASCADE)
-    holiday = models.ForeignKey(Holiday, on_delete=models.SET_NULL, null=True, blank=True)  # 追加
-    description = models.TextField(blank=True)  # 一言テキストを入れるためのカラム
+    holiday_name = models.CharField(max_length=255)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        holiday_name = self.holiday.name if self.holiday else 'なし'  # holidayが設定されていない場合の処理
-        return (f'{self.staff.name} - {self.day_of_week.day_name} {self.date} '
-                f'{self.starttime} to {self.endtime} | 休み: {holiday_name} | 説明: {self.description}')
+        return self.holiday_name
+
+
+class ShiftPreference(models.Model):
+    id = models.AutoField(primary_key=True)
+
+    staff = models.ForeignKey(Staff, on_delete=models.CASCADE)
+    date = models.DateField()  # 日付を追加
+    starttime = models.TimeField(null=True)
+    endtime = models.TimeField(null=True)
+    confirmed_starttime = models.TimeField(null=True, blank=True)  # 確定開始時刻
+    confirmed_endtime = models.TimeField(null=True, blank=True)  # 確定終了時刻
+    day_of_week = models.ForeignKey(DayOfWeek, on_delete=models.CASCADE)  # DayOfWeek モデルとの関連付け
+    holiday = models.ForeignKey(Holiday, on_delete=models.SET_NULL, null=True, blank=True)  # Holiday モデルとの関連付け
+    description = models.TextField(null=True, blank=True)  # 説明を追加
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        holiday_name = self.holiday.holiday_name if self.holiday else 'なし'
+        return f'{self.staff.name} - {self.day_of_week.day_name} {self.date} {self.starttime} to {self.endtime} ({holiday_name})'
 
 class ShiftHistory(models.Model):
     id = models.AutoField(primary_key=True)

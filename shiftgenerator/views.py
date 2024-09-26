@@ -19,7 +19,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_time
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.csrf import csrf_exempt
-from .models import ShiftPreference, Staff, DayOfWeek, ShiftHistory,ShiftPreference
+from .models import ShiftPreference, Staff, DayOfWeek, ShiftHistory,ShiftPreference,Holiday
 import traceback
 from .forms import ShiftPreferenceForm
 import json
@@ -185,9 +185,35 @@ def shift_form(request):
 
     # データをJSON形式に変換
     events = []
+    
+    # シフトデータを元にイベントを生成
     for shift in shifts:
-        # starttime と endtime が None の場合はスキップ
-        if shift.starttime and shift.endtime:
+        if shift.holiday:
+
+            # 休みの種類に応じて色を決定
+            if shift.holiday.id == 1:  # 例: idが1の休み
+                holiday_color = '#ff3d3d'  # 赤
+            elif shift.holiday.id == 2:  # 例: idが2の休み
+                holiday_color = '#12a8b3'  # 水色
+            elif shift.holiday.id == 3:  # 例: idが3の休み
+                holiday_color = '#ede100'  # 黄色
+            else:
+                holiday_color = 'red'  # デフォルトの色
+        
+            events.append({
+                'title': shift.holiday.holiday_name,  # 休みの名前をタイトルとして使用
+                'start': shift.date.isoformat() + 'T00:00:00',  # 一日の始まり
+                'end': shift.date.isoformat() + 'T23:59:59',  # 一日の終わり
+                'id': shift.id,  # シフトIDをそのまま使用
+                'display': 'block',  # 通常のイベントとして表示
+                'extendedProps': {  # extendedPropsに情報を追加
+                'holiday': True,
+                'holidayColor': holiday_color,# 休みの色を追加
+                'starttime': None,
+                'endtime': None
+                }
+            })
+        elif shift.starttime and shift.endtime:
             events.append({
                 'title': f'{shift.starttime.strftime("%H:%M")} - {shift.endtime.strftime("%H:%M")}',
                 'id': shift.id,
@@ -195,10 +221,18 @@ def shift_form(request):
                 'end': f'{shift.date}T{shift.endtime.strftime("%H:%M:%S")}',
                 'starttime': shift.starttime.strftime("%H:%M"),
                 'endtime': shift.endtime.strftime("%H:%M"),
-                'backgroundColor': 'blue'
+                'backgroundColor': 'blue',  # 通常のシフトの色
+                'extendedProps': {  # extendedPropsに情報を追加
+                'holiday': False,
+                'starttime': shift.starttime.strftime("%H:%M"),
+                'endtime': shift.endtime.strftime("%H:%M")
+                }
             })
-
-    history_list = [{'start': h.starttime.strftime("%H:%M"), 'end': h.endtime.strftime("%H:%M")} for h in history]
+   
+    # 履歴が存在する場合のみJSON形式に変換
+    history_list = []
+    if history.exists():
+        history_list = [{'start': h.starttime.strftime("%H:%M"), 'end': h.endtime.strftime("%H:%M")} for h in history]
 
     events_json = json.dumps(events)
     history_json = json.dumps(history_list)
@@ -208,11 +242,10 @@ def shift_form(request):
         'events': events_json,
         'name': staff_profile.name,
         'username': user.username,
-        'history': history_json
+        'history': history_json if history_list else None
     }
     
     return render(request, 'shiftgenerator/shift_form.html', context)
-
 
 @login_required
 def shift_detail(request, shift_id):
@@ -221,6 +254,12 @@ def shift_detail(request, shift_id):
     except ShiftPreference.DoesNotExist:
         return redirect('shiftgenerator:shift-form')  # シフトが存在しない場合のリダイレクト
 
+    # Noneの値を'--'に置き換え
+    shift_starttime = shift.starttime.strftime("%H:%M") if shift.starttime else '--'
+    shift_endtime = shift.endtime.strftime("%H:%M") if shift.endtime else '--'
+    holiday_name = shift.holiday.holiday_name if shift.holiday else '--'
+    description = shift.description if shift.description else '--'
+
     if request.method == 'POST':
         # シフトを削除
         shift.delete()
@@ -228,7 +267,11 @@ def shift_detail(request, shift_id):
         return redirect('shiftgenerator:shift-form')  # シフトフォームページにリダイレクト
 
     return render(request, 'shiftgenerator/shift_detail.html', {
-        'shift': shift
+        'shift': shift,
+        'shift_starttime': shift_starttime,
+        'shift_endtime': shift_endtime,
+        'holiday_name': holiday_name,
+        'description': description,
     })
 
 # シフト履歴を取得するAPI
@@ -257,6 +300,10 @@ def register(request):
     
     return render(request, 'registration/register.html', {'form': form})
 
+
+def get_holidays(request):
+    holidays = Holiday.objects.values('id', 'holiday_name')  # 必要なフィールドを取得
+    return JsonResponse(list(holidays), safe=False)
 
 def login(request):
     if request.method == 'POST':
@@ -484,6 +531,57 @@ def new_register_shift(request):
         return redirect('shiftgenerator:shift-form')
 
 
+def holiday_shift_register(request):
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'POSTメソッドのみ許可されています'}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        print(data)  # リクエストデータを確認
+
+        # holiday_idを整数に変換
+        holiday_id = int(data.get('holiday_id'))
+        date_str = data.get('date')
+
+        # 日付をパース
+        date = parse_date(date_str)
+        if not date:
+            return JsonResponse({'success': False, 'error': '無効な日付形式です'}, status=400)
+
+         # 曜日を取得 (0=月曜日, 6=日曜日)
+        day_of_week_number = date.weekday()  # date.weekday()で曜日を取得
+        
+        # DayOfWeek モデルから対応する曜日を取得
+        try:
+            day_of_week_instance = DayOfWeek.objects.get(day_number=day_of_week_number)
+        except DayOfWeek.DoesNotExist:
+            return JsonResponse({'success': False, 'error': 'DayOfWeek インスタンスが見つかりませんでした'}, status=400)
+
+        # ユーザーのスタッフプロファイルを取得
+        staff_profile = getattr(request.user, 'staff_profile', None)
+        if not staff_profile:
+            return JsonResponse({'success': False, 'error': 'スタッフプロファイルが見つかりません'}, status=400)
+
+        # Holiday モデルから選択された休みを取得
+        try:
+            holiday_instance = Holiday.objects.get(id=holiday_id)
+        except Holiday.DoesNotExist:
+            return JsonResponse({'success': False, 'error': '選択された休みが見つかりませんでした'}, status=400)
+
+        # シフト希望を登録（休み）
+        ShiftPreference.objects.create(
+            staff=staff_profile,
+            date=date,
+            holiday=holiday_instance,  # 休みの種類を登録
+            day_of_week=day_of_week_instance  # 曜日情報を登録
+        )
+
+        return JsonResponse({'success': True})
+    except Exception as e:
+        print(f"Error: {str(e)}")  # エラーメッセージをコンソールに出力
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+
 @csrf_exempt
 def history_shift_register(request):
     if request.method == 'POST':
@@ -537,15 +635,29 @@ def get_updated_events(request):
         return JsonResponse([], safe=False)
 
     shifts = ShiftPreference.objects.filter(staff=staff_profile)
-    events = [
-        {
-            'title': f'{shift.starttime.strftime("%H:%M")} - {shift.endtime.strftime("%H:%M")}',
-            'id': shift.id,
-            'start': f'{shift.date}T{shift.starttime.strftime("%H:%M:%S")}',
-            'end': f'{shift.date}T{shift.endtime.strftime("%H:%M:%S")}',
-            'starttime': shift.starttime.strftime("%H:%M"),
-            'endtime': shift.endtime.strftime("%H:%M"),
-            'backgroundColor': 'blue'
-        } for shift in shifts
-    ]
+    events = []
+
+    for shift in shifts:
+        if shift.holiday:
+            # 休みのイベント
+            events.append({
+                'title': shift.holiday.holiday_name,  # 休みの名前をタイトルとして使用
+                'start': shift.date.isoformat() + 'T00:00:00',  # 一日の始まり
+                'end': shift.date.isoformat() + 'T23:59:59',  # 一日の終わり
+                'id': shift.id,  # シフトIDをそのまま使用
+                'backgroundColor': 'red',  # 休みの色
+                'display': 'block'  # 通常のイベントとして表示
+            })
+        elif shift.starttime and shift.endtime:
+            # 通常のシフトイベント
+            events.append({
+                'title': f'{shift.starttime.strftime("%H:%M")} - {shift.endtime.strftime("%H:%M")}',
+                'id': shift.id,
+                'start': f'{shift.date}T{shift.starttime.strftime("%H:%M:%S")}',
+                'end': f'{shift.date}T{shift.endtime.strftime("%H:%M:%S")}',
+                'starttime': shift.starttime.strftime("%H:%M"),
+                'endtime': shift.endtime.strftime("%H:%M"),
+                'backgroundColor': 'blue'  # 通常のシフトの色
+            })
+    
     return JsonResponse(events, safe=False)

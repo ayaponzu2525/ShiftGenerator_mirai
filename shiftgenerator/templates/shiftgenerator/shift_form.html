@@ -78,6 +78,19 @@
                         <span id="dateDisplay"></span>
                     </div>
                     <input type="hidden" id="shiftId"> <!-- 隠しフィールドでシフトIDを保持 -->
+
+                    <button type="button" class="btn btn-primary mb-4" id="registerButton">新規登録</button>
+                    <div class="form-group">
+                        <label for="holidaySelect">休みの種類</label>
+                        <div id="holidayButtons">
+                            <!-- 各ボタンに休みの種類を持たせる -->
+                            {% for holiday in holidays %}
+                                <button type="button" class="btn btn-outline-primary holiday-button" data-holiday-id="{{ holiday.id }}">
+                                    {{ holiday.holiday_name }}
+                                </button>
+                            {% endfor %}
+                        </div>
+                    </div>
                     <div class="form-group">
                         <label for="historyContainer">履歴から選択</label>
                         <div id="historyContainer">
@@ -87,7 +100,7 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-dismiss="modal">キャンセル</button>
-                    <button type="button" class="btn btn-primary" id="registerButton">新規登録</button>
+                    <button type="button" class="btn btn-primary" id="registerShiftButton" disabled>休みを登録</button> <!-- 初期状態で無効化 -->
                 </div>
             </div>
         </div>
@@ -110,22 +123,31 @@ document.addEventListener('DOMContentLoaded', function() {
         locale: 'ja',
         events: events,
         eventContent: function(arg) {
-            var startTime = formatTime(arg.event.extendedProps.starttime); 
-            var endTime = formatTime(arg.event.extendedProps.endtime); 
-            var timeRange = startTime + ' - ' + endTime;
-
             var title = document.createElement('div');
-            title.innerHTML = `<div style="display: flex; align-items: center;">
-                <span class="fc-event-dot" style="background-color: ${arg.event.backgroundColor};"></span>
-                ${timeRange}
-            </div>`;
+
+            // 休みイベントの場合
+            if (arg.event.extendedProps.holiday) { // holidayが存在する場合
+                title.innerHTML = `<div style="display: flex; justify-content: center; align-items: center; background-color: ${arg.event.extendedProps.holidayColor}; color: white; padding: 5px; border-radius: 4px; width: 100%;">
+                    ${arg.event.title}</div>`; // 中央に配置
+            } else {
+                // 通常のシフトイベント
+                var startTime = formatTime(arg.event.extendedProps.starttime); 
+                var endTime = formatTime(arg.event.extendedProps.endtime); 
+                var timeRange = startTime + ' - ' + endTime;
+
+                title.innerHTML = `<div style="display: flex; align-items: center;">
+                    <span class="fc-event-dot" style="background-color: ${arg.event.backgroundColor};"></span>
+                    ${timeRange}
+                </div>`;
+            }
 
             return { domNodes: [title] };
         },
         eventClick: function(info) {
-            var shiftId = info.event.id;
+            console.log(info.event); // ここで情報を確認
+            var shiftId = info.event.id;  // 直接シフトIDを取得
             if (shiftId) {
-                var url = "/shift-detail/" + shiftId + "/";
+                var url = "/shift-detail/" + shiftId + "/";  // シフトIDを使ってURLを作成
                 window.location.href = url;
             } else {
                 console.error('シフトIDが取得できませんでした');
@@ -172,6 +194,8 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
+    
+
     function registerShift(starttime, endtime, date) {
         fetch('/history-shift-register/', {
             method: 'POST',
@@ -182,7 +206,8 @@ document.addEventListener('DOMContentLoaded', function() {
             body: JSON.stringify({
                 starttime: starttime,
                 endtime: endtime,
-                date: date
+                date: date,
+                holiday: selectedHoliday
             })
         })
         .then(response => response.json())
@@ -196,6 +221,78 @@ document.addEventListener('DOMContentLoaded', function() {
         })
         .catch(error => console.error('シフト登録エラー:', error));
     }
+
+   // 休みの登録を行う関数
+    function registerHoliday(holidayId, date) {
+        if (!holidayId || !date) {
+            console.error("休みの種類か日付が選択されていません");
+            return;
+        }
+
+        // データ送信
+        fetch('/holiday-shift-register/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')  // DjangoのCSRFトークンを送信
+            },
+            body: JSON.stringify({
+                'holiday_id': holidayId,
+                'date': date
+            })
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('ネットワークエラー');
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.success) {
+                console.log('休みが登録されました');
+                // 必要ならば、ここで画面の更新やモーダルの閉じる処理などを追加
+                $('#shiftModal').modal('hide'); // モーダルを閉じる
+                updateCalendar();
+            } else {
+                console.error('休みの登録に失敗しました:', data.error);
+            }
+        })
+        .catch(error => {
+            console.error('エラーが発生しました:', error);
+        });
+    }
+
+    // 休みの登録ボタンを押したときの処理を追加
+    fetch('/get-holidays/') // 休みの種類を取得
+        .then(response => response.json())
+        .then(holidays => {
+            const holidayButtons = document.getElementById('holidayButtons');
+            holidayButtons.innerHTML = ''; // 既存のボタンをクリア
+
+            holidays.forEach(holiday => {
+                const holidayButton = document.createElement('button');
+                holidayButton.className = 'btn btn-outline-primary holiday-button';
+                holidayButton.setAttribute('data-holiday-id', holiday.id);
+                holidayButton.innerText = holiday.holiday_name;
+
+                // ボタンの間隔を開けるためのスタイルを追加
+                holidayButton.style.marginRight = '10px'; // 右側に間隔を追加
+
+                // クリックイベントを追加
+                holidayButton.onclick = () => {
+                    const holidayId = holidayButton.getAttribute('data-holiday-id');
+                    const date = document.getElementById('dateDisplay').innerText;  // 表示されている日付を取得
+
+                    // 関数を呼び出す
+                    registerHoliday(holidayId, date);
+                };
+
+                holidayButtons.appendChild(holidayButton);
+            });
+        })
+        .catch(error => console.error('休み取得エラー:', error));
+
+
 
     function formatTime(timeStr) {
         var time = new Date('1970-01-01T' + timeStr);
@@ -231,19 +328,26 @@ document.addEventListener('DOMContentLoaded', function() {
 
 
     function updateCalendar() {
-        fetch('/get-updated-events/')  // 新しいエンドポイントを作成
-            .then(response => response.json())
-            .then(updatedEvents => {
-                calendar.removeAllEvents();  // 既存のイベントをすべて削除
-                calendar.addEventSource(updatedEvents);  // 新しいイベントを追加
-            })
-            .catch(error => console.error('カレンダー更新エラー:', error));
-    }
+    fetch('/get-updated-events/')
+        .then(response => {
+            if (!response.ok) {
+                // ステータスコードがOKでない場合のエラーハンドリング
+                throw new Error(`HTTPエラー: ${response.status} ${response.statusText}`);
+            }
+            return response.json();
+        })
+        .then(updatedEvents => {
+            calendar.removeAllEvents();  // 既存のイベントをすべて削除
+            calendar.addEventSource(updatedEvents);  // 新しいイベントを追加
+            calendar.render();  // カレンダーを再描画
+        })
+        .catch(error => console.error('カレンダー更新エラー:', error));
+    };
 
-    calendar.render();
+// 最初のカレンダー描画
+calendar.render();
+
 });
-
-
-    </script>
+</script>
 </body>
 </html>

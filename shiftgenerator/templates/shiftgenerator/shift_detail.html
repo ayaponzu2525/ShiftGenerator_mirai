@@ -62,16 +62,24 @@
                     <td>{{ shift.date }}</td>
                 </tr>
                 <tr>
+                    <th>曜日</th>
+                    <td>{{ shift.day_of_week.day_name }}</td>
+                </tr>
+                <tr>
                     <th>開始時間</th>
-                    <td>{{ shift.starttime }}</td>
+                    <td>{{ shift_starttime }}</td>
                 </tr>
                 <tr>
                     <th>終了時間</th>
-                    <td>{{ shift.endtime }}</td>
+                    <td>{{ shift_endtime }}</td>
                 </tr>
                 <tr>
-                    <th>曜日</th>
-                    <td>{{ shift.day_of_week.day_name }}</td>
+                    <th>休みの名称</th>
+                    <td>{{ holiday_name }}</td>
+                </tr>
+                <tr>
+                    <th>説明</th>
+                    <td>{{ description }}</td>
                 </tr>
             </tbody>
         </table>
