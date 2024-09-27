@@ -325,23 +325,41 @@ document.addEventListener('DOMContentLoaded', function() {
         window.location.href = newRegisterUrl; // shift_register.html に遷移
     });
 
+    //カレンダー更新
+    let lastUpdate = null;  // 初期状態ではnullにする
 
     function updateCalendar() {
-    fetch('/get-updated-events/')
-        .then(response => {
-            if (!response.ok) {
-                // ステータスコードがOKでない場合のエラーハンドリング
-                throw new Error(`HTTPエラー: ${response.status} ${response.statusText}`);
-            }
-            return response.json();
-        })
-        .then(updatedEvents => {
-            calendar.removeAllEvents();  // 既存のイベントをすべて削除
-            calendar.addEventSource(updatedEvents);  // 新しいイベントを追加
-            calendar.render();  // カレンダーを再描画
-        })
-        .catch(error => console.error('カレンダー更新エラー:', error));
+        // lastUpdateがnullなら最初の更新として現在時刻を設定
+        const updateParam = lastUpdate ? `?last_update=${lastUpdate}` : '';
+        
+        fetch(`/get-updated-events/${updateParam}`)
+            .then(response => response.json())
+            .then(updatedEvents => {
+                const currentEvents = calendar.getEvents();
+                console.log("Current Events: ", currentEvents); // 既存イベントを確認
+                updatedEvents.forEach(event => {
+                    // console.log("Event ID:", event.id); // イベントIDを出力
+                    // console.log("Event title:", event.title); // イベントタイトルを出力
+                    const existingEvent = currentEvents.find(e => e.id === event.id);
+                    if (existingEvent) {
+                        existingEvent.remove();
+                    }
+                    calendar.addEvent({
+                        id: event.id,
+                        title: event.title,
+                        start: event.start,
+                        end: event.end,
+                        backgroundColor: event.backgroundColor,
+                        display: event.display || 'auto', // カスタムスタイルを適用
+                    });
+                });
+                // 更新時刻を現在の時刻に更新
+                lastUpdate = new Date().toISOString();
+            })
+            .catch(error => console.error('カレンダー更新エラー:', error));
     };
+
+
 
 // 最初のカレンダー描画
 calendar.render();

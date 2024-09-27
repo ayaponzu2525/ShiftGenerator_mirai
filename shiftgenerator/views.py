@@ -26,6 +26,7 @@ import json
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, render, redirect
 from django.contrib.auth.decorators import user_passes_test
+from django.utils.timezone import now
 
 
 
@@ -627,37 +628,42 @@ def history_shift_register(request):
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)})
 
-def get_updated_events(request):
+def get_updated_events(request, last_update):
     user = request.user
     staff_profile = getattr(user, 'staff_profile', None)
     
     if not staff_profile:
         return JsonResponse([], safe=False)
-
-    shifts = ShiftPreference.objects.filter(staff=staff_profile)
+    
+    # リクエストパラメータから last_update を取得
+    last_update = request.GET.get('last_update')
+    
+    if last_update:
+        last_update_datetime = timezone.make_aware(datetime.fromisoformat(last_update))
+    else:
+        last_update_datetime = None
+    
+    # last_update 以降に更新されたシフトのみ取得
+    shifts = ShiftPreference.objects.filter(staff=staff_profile, updated_at__gte=last_update_datetime)
+  
     events = []
-
     for shift in shifts:
         if shift.holiday:
-            # 休みのイベント
             events.append({
-                'title': shift.holiday.holiday_name,  # 休みの名前をタイトルとして使用
-                'start': shift.date.isoformat() + 'T00:00:00',  # 一日の始まり
-                'end': shift.date.isoformat() + 'T23:59:59',  # 一日の終わり
-                'id': shift.id,  # シフトIDをそのまま使用
-                'backgroundColor': 'red',  # 休みの色
-                'display': 'block'  # 通常のイベントとして表示
+                'title': shift.holiday.holiday_name,
+                'start': shift.date.isoformat() + 'T00:00:00',
+                'end': shift.date.isoformat() + 'T23:59:59',
+                'id': shift.id,
+                'backgroundColor': 'red',
+                'display': 'block'
             })
         elif shift.starttime and shift.endtime:
-            # 通常のシフトイベント
             events.append({
                 'title': f'{shift.starttime.strftime("%H:%M")} - {shift.endtime.strftime("%H:%M")}',
                 'id': shift.id,
                 'start': f'{shift.date}T{shift.starttime.strftime("%H:%M:%S")}',
                 'end': f'{shift.date}T{shift.endtime.strftime("%H:%M:%S")}',
-                'starttime': shift.starttime.strftime("%H:%M"),
-                'endtime': shift.endtime.strftime("%H:%M"),
-                'backgroundColor': 'blue'  # 通常のシフトの色
+                'backgroundColor': 'blue'
             })
     
     return JsonResponse(events, safe=False)
