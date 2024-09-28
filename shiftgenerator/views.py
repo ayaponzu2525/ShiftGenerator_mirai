@@ -16,7 +16,7 @@ from django.contrib.auth.forms import AuthenticationForm
 from django.contrib.auth import login as auth_login, authenticate
 from django.contrib import messages 
 from django.utils import timezone
-from django.utils.dateparse import parse_date, parse_time
+from django.utils.dateparse import parse_date, parse_time,parse_datetime
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.csrf import csrf_exempt
 from .models import ShiftPreference, Staff, DayOfWeek, ShiftHistory,ShiftPreference,Holiday
@@ -616,36 +616,43 @@ def history_shift_register(request):
                 return JsonResponse({'success': False, 'error': 'スタッフプロファイルが見つかりません'}, status=400)
 
             # シフトの登録
-            ShiftPreference.objects.create(
+            new_shift = ShiftPreference.objects.create(
                 staff=staff_profile,
                 starttime=starttime,
                 endtime=endtime,
                 date=date,
                 day_of_week=day_of_week_instance
             )
+            
+             # 登録したシフトの更新時刻を取得
+            last_update = new_shift.updated_at.isoformat()  # updated_atをISOフォーマットで取得
 
-            return JsonResponse({'success': True})
+            return JsonResponse({'success': True, 'last_update': last_update})  # last_updateをレスポンスに含める
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)})
 
-def get_updated_events(request, last_update):
+
+def get_update_events(request):
     user = request.user
     staff_profile = getattr(user, 'staff_profile', None)
-    
+
     if not staff_profile:
         return JsonResponse([], safe=False)
-    
+
     # リクエストパラメータから last_update を取得
     last_update = request.GET.get('last_update')
     
-    if last_update:
-        last_update_datetime = timezone.make_aware(datetime.fromisoformat(last_update))
+    # last_updateがISOフォーマットなら、parse_datetimeで解析
+    last_update_datetime = parse_datetime(last_update) if last_update else None
+
+    if last_update_datetime:
+        # last_update 以降に更新されたシフトのみを取得
+        shifts = ShiftPreference.objects.filter(updated_at__gte=last_update_datetime)
+        print("更新した奴だけあげるわ")
     else:
-        last_update_datetime = None
-    
-    # last_update 以降に更新されたシフトのみ取得
-    shifts = ShiftPreference.objects.filter(staff=staff_profile, updated_at__gte=last_update_datetime)
-  
+        shifts = ShiftPreference.objects.all()  # もしlast_updateが無い場合全件取得
+        print("全部取るわ！")
+
     events = []
     for shift in shifts:
         if shift.holiday:
@@ -665,5 +672,5 @@ def get_updated_events(request, last_update):
                 'end': f'{shift.date}T{shift.endtime.strftime("%H:%M:%S")}',
                 'backgroundColor': 'blue'
             })
-    
-    return JsonResponse(events, safe=False)
+
+    return JsonResponse({'success': True, 'events': events}, safe=False)

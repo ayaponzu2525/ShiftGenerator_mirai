@@ -213,6 +213,7 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(data => {
             if (data.success) {
                 $('#shiftModal').modal('hide'); // モーダルを閉じる
+                lastUpdate = data.last_update;  // バックエンドからの更新時刻を設定
                 updateCalendar(); // カレンダーを更新する
             } else {
                 alert('シフト登録に失敗しました');
@@ -326,37 +327,62 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     //カレンダー更新
-    let lastUpdate = null;  // 初期状態ではnullにする
+    
+    // lastUpdate = data.last_update;  // バックエンドからの更新時刻を設定
+    // updateCalendar(); // カレンダーを更新する
+    
+    let lastUpdate = null; // グローバル変数としてlastUpdateを定義
 
     function updateCalendar() {
-        // lastUpdateがnullなら最初の更新として現在時刻を設定
-        const updateParam = lastUpdate ? `?last_update=${lastUpdate}` : '';
-        
-        fetch(`/get-updated-events/${updateParam}`)
-            .then(response => response.json())
-            .then(updatedEvents => {
-                const currentEvents = calendar.getEvents();
-                console.log("Current Events: ", currentEvents); // 既存イベントを確認
-                updatedEvents.forEach(event => {
-                    // console.log("Event ID:", event.id); // イベントIDを出力
-                    // console.log("Event title:", event.title); // イベントタイトルを出力
-                    const existingEvent = currentEvents.find(e => e.id === event.id);
-                    if (existingEvent) {
-                        existingEvent.remove();
+        // lastUpdateをクエリパラメータに含める
+        const url = `/get-update-events/?last_update=${encodeURIComponent(lastUpdate)}`;
+
+        fetch(url, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken'),
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                
+                // 既存のカレンダーのイベントを取得
+                const existingEvents = calendar.getEvents();
+                const existingEventIds = existingEvents.map(event => event.id);
+
+                // 新しいイベントをカレンダーに追加
+                data.events.forEach(event => {
+                    // 既存のイベントIDと比較して、重複していない場合に追加
+                    if (!existingEventIds.includes(event.id)) {
+                        console.log('Adding event:', event);  // デバッグ用にイベントデータを確認
+
+                        if (event.holiday) {  // 休みのイベントの場合
+                            calendar.addEvent({
+                                title: event.title,
+                                start: event.start,  // ここがISOフォーマットか確認
+                                end: event.end,      // ここもISOフォーマットか確認
+                                id: event.id,
+                                display: event.display,
+                                backgroundColor: event.backgroundColor, // 休みの色を設定
+                            });
+                        } else {  // 通常のシフトの場合
+                            calendar.addEvent({
+                                title: event.title,
+                                start: event.start,  // ISO形式を確認
+                                end: event.end,      // ISO形式を確認
+                                id: event.id,
+                                backgroundColor: 'blue', // 通常のシフトの色
+                            });
+                        }
                     }
-                    calendar.addEvent({
-                        id: event.id,
-                        title: event.title,
-                        start: event.start,
-                        end: event.end,
-                        backgroundColor: event.backgroundColor,
-                        display: event.display || 'auto', // カスタムスタイルを適用
-                    });
                 });
-                // 更新時刻を現在の時刻に更新
-                lastUpdate = new Date().toISOString();
-            })
-            .catch(error => console.error('カレンダー更新エラー:', error));
+            } else {
+                console.error('イベント取得に失敗しました');
+            }
+        })
+        .catch(error => console.error('カレンダー更新エラー:', error));
     };
 
 
