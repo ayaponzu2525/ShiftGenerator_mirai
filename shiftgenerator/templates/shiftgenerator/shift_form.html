@@ -121,6 +121,16 @@ document.addEventListener('DOMContentLoaded', function() {
     var calendar = new FullCalendar.Calendar(calendarEl, {
         initialView: 'dayGridMonth',
         locale: 'ja',
+        timeZone: 'Asia/Tokyo',
+        displayEventTime: true,
+        eventTimeFormat: {
+            hour: 'numeric',
+            minute: '2-digit',
+            meridiem: false
+        },
+        eventSourceFailure: function(errorObj) {
+            console.error('イベントの取得に失敗しました:', errorObj);
+        },
         events: events,
         eventContent: function(arg) {
             var title = document.createElement('div');
@@ -326,6 +336,49 @@ document.addEventListener('DOMContentLoaded', function() {
         window.location.href = newRegisterUrl; // shift_register.html に遷移
     });
 
+    // タイムゾーンを明示的に指定して日付を解析する関数
+    function parseJapanDate(dateString) {
+        return new Date(dateString.replace(' ', 'T') + '+09:00');
+    }
+
+    // デバッグ情報を出力する関数
+    function debugDateInfo(label, date) {
+        console.log(`${label}:`);
+        console.log(`  ISO String: ${date.toISOString()}`);
+        console.log(`  Locale String: ${date.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`);
+        console.log(`  getTime(): ${date.getTime()}`);
+    }
+
+    // カレンダーにイベントを追加する関数
+    function addEventToCalendar(event) {
+        var title = document.createElement('div');
+
+        // 休みイベントの場合
+        if (event.extendedProps.holiday) { // holidayが存在する場合
+            title.innerHTML = `<div style="display: flex; justify-content: center; align-items: center; background-color: ${event.extendedProps.holidayColor}; color: white; padding: 5px; border-radius: 4px; width: 100%;">
+                ${event.title}</div>`; // 中央に配置
+        } else {
+            // 通常のシフトイベント
+            var startTime = formatTime(event.extendedProps.starttime); 
+            var endTime = formatTime(event.extendedProps.endtime); 
+            var timeRange = startTime + ' - ' + endTime;
+
+            title.innerHTML = `<div style="display: flex; align-items: center;">
+                <span class="fc-event-dot" style="background-color: ${event.backgroundColor};"></span>
+                ${timeRange}
+            </div>`;
+        }
+
+        // デバッグ情報
+        console.log('Added event:');
+        console.log('  Start (UTC):', event.start);
+        console.log('  End (UTC):', event.end);
+        console.log('Start (Local):', new Date(event.start).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }));
+        console.log('End (Local):', new Date(event.end).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }));
+
+        return { domNodes: [title] };
+    }
+
     //カレンダー更新
     
     // lastUpdate = data.last_update;  // バックエンドからの更新時刻を設定
@@ -346,6 +399,7 @@ document.addEventListener('DOMContentLoaded', function() {
         })
         .then(response => response.json())
         .then(data => {
+            console.log('response data: ', data);
             if (data.success) {
                 
                 // 既存のカレンダーのイベントを取得
@@ -354,28 +408,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 // 新しいイベントをカレンダーに追加
                 data.events.forEach(event => {
-                    // 既存のイベントIDと比較して、重複していない場合に追加
                     if (!existingEventIds.includes(event.id)) {
-                        console.log('Adding event:', event);  // デバッグ用にイベントデータを確認
-
-                        if (event.holiday) {  // 休みのイベントの場合
-                            calendar.addEvent({
-                                title: event.title,
-                                start: event.start,  // ここがISOフォーマットか確認
-                                end: event.end,      // ここもISOフォーマットか確認
-                                id: event.id,
-                                display: event.display,
-                                backgroundColor: event.backgroundColor, // 休みの色を設定
-                            });
-                        } else {  // 通常のシフトの場合
-                            calendar.addEvent({
-                                title: event.title,
-                                start: event.start,  // ISO形式を確認
-                                end: event.end,      // ISO形式を確認
-                                id: event.id,
-                                backgroundColor: 'blue', // 通常のシフトの色
-                            });
-                        }
+                        console.log('Received event:', event);
+                        addEventToCalendar(event);
                     }
                 });
             } else {
@@ -384,7 +419,6 @@ document.addEventListener('DOMContentLoaded', function() {
         })
         .catch(error => console.error('カレンダー更新エラー:', error));
     };
-
 
 
 // 最初のカレンダー描画

@@ -646,23 +646,41 @@ def get_update_events(request):
     last_update_datetime = parse_datetime(last_update) if last_update else None
 
     if last_update_datetime:
-        # last_update 以降に更新されたシフトのみを取得
-        shifts = ShiftPreference.objects.filter(updated_at__gte=last_update_datetime)
+        # last_update 以降に更新された、そのユーザーに関連するシフトのみを取得
+        shifts = ShiftPreference.objects.filter(staff=staff_profile, updated_at__gte=last_update_datetime)
         print("更新した奴だけあげるわ")
     else:
-        shifts = ShiftPreference.objects.all()  # もしlast_updateが無い場合全件取得
+        # そのユーザーに関連する全てのシフトを取得
+        shifts = ShiftPreference.objects.filter(staff=staff_profile)
         print("全部取るわ！")
+    
+
 
     events = []
     for shift in shifts:
         if shift.holiday:
+            # 休みの種類に応じて色を決定
+            if shift.holiday.id == 1:  # 例: idが1の休み
+                holiday_color = '#ff3d3d'  # 赤
+            elif shift.holiday.id == 2:  # 例: idが2の休み
+                holiday_color = '#12a8b3'  # 水色
+            elif shift.holiday.id == 3:  # 例: idが3の休み
+                holiday_color = '#ede100'  # 黄色
+            else:
+                holiday_color = 'red'  # デフォルトの色
+            
             events.append({
-                'title': shift.holiday.holiday_name,
-                'start': shift.date.isoformat() + 'T00:00:00',
-                'end': shift.date.isoformat() + 'T23:59:59',
-                'id': shift.id,
-                'backgroundColor': 'red',
-                'display': 'block'
+                'title': shift.holiday.holiday_name,  # 休みの名前をタイトルとして使用
+                'start': shift.date.isoformat() + 'T00:00:00',  # 一日の始まり
+                'end': shift.date.isoformat() + 'T23:59:59',  # 一日の終わり
+                'id': shift.id,  # シフトIDをそのまま使用
+                'display': 'block',  # 通常のイベントとして表示
+                'extendedProps': {  # extendedPropsに情報を追加
+                'holiday': True,
+                'holidayColor': holiday_color,# 休みの色を追加
+                'starttime': None,
+                'endtime': None
+                }
             })
         elif shift.starttime and shift.endtime:
             events.append({
@@ -670,7 +688,16 @@ def get_update_events(request):
                 'id': shift.id,
                 'start': f'{shift.date}T{shift.starttime.strftime("%H:%M:%S")}',
                 'end': f'{shift.date}T{shift.endtime.strftime("%H:%M:%S")}',
-                'backgroundColor': 'blue'
+                'starttime': shift.starttime.strftime("%H:%M"),
+                'endtime': shift.endtime.strftime("%H:%M"),
+                'backgroundColor': 'blue',  # 通常のシフトの色
+                'extendedProps': {  # extendedPropsに情報を追加
+                'holiday': False,
+                'starttime': shift.starttime.strftime("%H:%M"),
+                'endtime': shift.endtime.strftime("%H:%M")
+                }
             })
+    print(events)
+
 
     return JsonResponse({'success': True, 'events': events}, safe=False)

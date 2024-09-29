@@ -37,7 +37,7 @@ class HolidayAdmin(admin.ModelAdmin):
 
 @admin.register(ShiftPreference)
 class ShiftPreferenceAdmin(admin.ModelAdmin):
-    list_display = ('staff', 'date', 'starttime', 'endtime', 'holiday', 'description')  # 表示するフィールドを指定
+    list_display = ('id', 'staff', 'date', 'starttime', 'endtime', 'holiday', 'description')  # 表示するフィールドを指定
     list_filter = ('holiday', 'staff')  # フィルターを追加
     search_fields = ('staff__name', 'description')  # スタッフ名と説明で検索可能
 
