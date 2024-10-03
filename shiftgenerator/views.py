@@ -569,15 +569,20 @@ def holiday_shift_register(request):
         except Holiday.DoesNotExist:
             return JsonResponse({'success': False, 'error': '選択された休みが見つかりませんでした'}, status=400)
 
+        
+
         # シフト希望を登録（休み）
-        ShiftPreference.objects.create(
+        new_shift = ShiftPreference.objects.create(
             staff=staff_profile,
             date=date,
             holiday=holiday_instance,  # 休みの種類を登録
             day_of_week=day_of_week_instance  # 曜日情報を登録
         )
 
-        return JsonResponse({'success': True})
+        # 登録したシフトの更新時刻を取得
+        last_update = new_shift.updated_at.isoformat()  # updated_atをISOフォーマットで取得
+
+        return JsonResponse({'success': True, 'last_update': last_update})# last_updateをレスポンスに含める
     except Exception as e:
         print(f"Error: {str(e)}")  # エラーメッセージをコンソールに出力
         return JsonResponse({'success': False, 'error': str(e)}, status=500)

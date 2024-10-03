@@ -262,6 +262,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 console.log('休みが登録されました');
                 // 必要ならば、ここで画面の更新やモーダルの閉じる処理などを追加
                 $('#shiftModal').modal('hide'); // モーダルを閉じる
+                lastUpdate = data.last_update; // バックエンドからの更新時刻を設定
                 updateCalendar();
             } else {
                 console.error('休みの登録に失敗しました:', data.error);
@@ -349,36 +350,6 @@ document.addEventListener('DOMContentLoaded', function() {
         console.log(`  getTime(): ${date.getTime()}`);
     }
 
-    // カレンダーにイベントを追加する関数
-    function addEventToCalendar(event) {
-        var title = document.createElement('div');
-
-        // 休みイベントの場合
-        if (event.extendedProps.holiday) { // holidayが存在する場合
-            title.innerHTML = `<div style="display: flex; justify-content: center; align-items: center; background-color: ${event.extendedProps.holidayColor}; color: white; padding: 5px; border-radius: 4px; width: 100%;">
-                ${event.title}</div>`; // 中央に配置
-        } else {
-            // 通常のシフトイベント
-            var startTime = formatTime(event.extendedProps.starttime); 
-            var endTime = formatTime(event.extendedProps.endtime); 
-            var timeRange = startTime + ' - ' + endTime;
-
-            title.innerHTML = `<div style="display: flex; align-items: center;">
-                <span class="fc-event-dot" style="background-color: ${event.backgroundColor};"></span>
-                ${timeRange}
-            </div>`;
-        }
-
-        // デバッグ情報
-        console.log('Added event:');
-        console.log('  Start (UTC):', event.start);
-        console.log('  End (UTC):', event.end);
-        console.log('Start (Local):', new Date(event.start).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }));
-        console.log('End (Local):', new Date(event.end).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }));
-
-        return { domNodes: [title] };
-    }
-
     //カレンダー更新
     
     // lastUpdate = data.last_update;  // バックエンドからの更新時刻を設定
@@ -410,7 +381,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 data.events.forEach(event => {
                     if (!existingEventIds.includes(event.id)) {
                         console.log('Received event:', event);
-                        addEventToCalendar(event);
+                        calendar.addEvent(event); // 自動で eventContent が呼ばれる
                     }
                 });
             } else {
