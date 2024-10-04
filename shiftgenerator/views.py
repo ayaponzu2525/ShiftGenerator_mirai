@@ -6,7 +6,7 @@ import os
 from django.conf import settings
 import numpy as np
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 
 import pytz
 from django.contrib.auth import login
@@ -330,8 +330,8 @@ logger = logging.getLogger(__name__)
 
 # CSVファイルとモデルのディレクトリ
 model_dir = os.path.join(settings.BASE_DIR, 'shiftgenerator/models/RandomForestmodels')
-csv_file_path = os.path.join(settings.BASE_DIR, 'shiftgenerator/requ_shiftdata', 'req_shiftdata.csv')
-staff_file_path = os.path.join(settings.BASE_DIR, 'shiftgenerator/staffdata', 'staff.csv')
+# csv_file_path = os.path.join(settings.BASE_DIR, 'shiftgenerator/requ_shiftdata', 'req_shiftdata.csv')
+# staff_file_path = os.path.join(settings.BASE_DIR, 'shiftgenerator/staffdata', 'staff.csv')
 
 # モデルのロード
 with open(os.path.join(model_dir, 'rf_assigned_model.pkl'), 'rb') as f:
@@ -350,56 +350,134 @@ print(sklearn.__version__)
 
 # 時間を分単位に変換する関数
 def time_to_minutes(time_str):
-    if pd.isna(time_str):
+    if pd.isna(time_str):  # NaNチェック
         return np.nan
+    if isinstance(time_str, time):  # datetime.timeの場合
+        return time_str.hour * 60 + time_str.minute
+    # 文字列の場合の処理
     hours, minutes = map(int, time_str.split(':'))
     return hours * 60 + minutes
 
 def minutes_to_time(minutes):
-    if pd.isna(minutes):
+    if pd.isna(minutes):  # NaNチェック
         return "00:00"
     hours = int(minutes // 60)
     minutes = int(minutes % 60)
     return f"{hours:02}:{minutes:02}"
 
+
 @csrf_exempt  # CSRFトークンの検証を無効化（セキュリティリスクに注意）
 def shift_generate(request):
     if request.method == 'POST':
         try:
-            # シフト希望のCSVファイルを読み込む
-            new_data = pd.read_csv(csv_file_path)
-            staff_df = pd.read_csv(staff_file_path)         
+            # 例: 取得したい期間を定義（ここでは今週の月曜日から日曜日まで）
+            today = timezone.now().date()
+            start_date = today - timedelta(days=today.weekday())  # 月曜日
+            end_date = start_date + timedelta(days=6)  # 日曜日
 
+            #指定した期間のシフト希望取得
+            shift_preferences = ShiftPreference.objects.filter(
+                date__range=(start_date, end_date)
+            ).select_related('staff', 'day_of_week')
+
+            #シフトを休みと分ける
+            working_shifts = shift_preferences.filter(holiday__isnull=True)
+            holiday_shifts = shift_preferences.filter(holiday__isnull=False)
+
+
+            #print("Shift Preferences:", list(shift_preferences.values()))
+
+            # スタッフ名を全員分取得
+            all_staff = Staff.objects.all()
 
             # データの前処理
-            weekday_map = {'月曜日': 0, '火曜日': 1, '水曜日': 2, '木曜日': 3, '金曜日': 4, '土曜日': 5, '日曜日': 6}
-            new_data['day_of_week'] = new_data['day_of_week'].map(weekday_map)
-            new_data['req_starttime_minutes'] = new_data['req_starttime'].apply(time_to_minutes)
-            new_data['req_endtime_minutes'] = new_data['req_endtime'].apply(time_to_minutes)
-            new_data = new_data[['staff_id', 'day_of_week', 'req_starttime_minutes', 'req_endtime_minutes']]
+            # シフト希望をDataFrameに変換
+            shift_data = pd.DataFrame(list(working_shifts.values(
+                'staff__id', 
+                'staff__name', 
+                'date', 
+                'starttime', 
+                'endtime', 
+                'day_of_week__day_number'  # 曜日の番号を取得
+            )))
+
+            # 列名を表示して確認する
+            print("Before renaming columns:", shift_data.columns)
+
+            shift_data.rename(columns={
+                'staff__id': 'staff_id',
+                'staff__name': 'staff_name',
+                'day_of_week__day_number': 'day_of_week'
+            }, inplace=True)
+
+            # 日付が文字列の場合、datetimeに変換
+            if shift_data['date'].dtype == 'object':
+                shift_data['date'] = pd.to_datetime(shift_data['date'], errors='coerce')  # 変換時のエラーを無視
+
+            
+            # 希望開始・終了時間を分に変換
+            shift_data['req_starttime_minutes'] = shift_data['starttime'].apply(time_to_minutes)
+            shift_data['req_endtime_minutes'] = shift_data['endtime'].apply(time_to_minutes)
+            shift_data = shift_data[['staff_id','staff_name', 'date','day_of_week', 'req_starttime_minutes', 'req_endtime_minutes']]
+
+            # モデルによる予測に必要な列のみを使用
+            shift_data_for_prediction = shift_data[['staff_id', 'day_of_week', 'req_starttime_minutes', 'req_endtime_minutes']]
 
             # モデルによる予測
-            assigned_predictions = rf_assigned.predict(new_data)
-            start_predictions = rf_start.predict(new_data)
-            end_predictions = rf_end.predict(new_data)
-            hours_predictions = rf_hours.predict(new_data)
+            assigned_predictions = rf_assigned.predict(shift_data_for_prediction)
+            start_predictions = rf_start.predict(shift_data_for_prediction)
+            end_predictions = rf_end.predict(shift_data_for_prediction)
+            hours_predictions = rf_hours.predict(shift_data_for_prediction)
 
-            # スタッフIDをキーにしてマージ
-            new_data = new_data.merge(staff_df[['staff_id', 'name']], on='staff_id', how='left')
-            print(new_data.columns)
+            # モデルから曜日のマッピングを取得
+            weekday_map = {day.day_number: day.day_name for day in DayOfWeek.objects.all()}
 
             # 結果をDataFrameにまとめる
-            results = pd.DataFrame({
-                'スタッフID': new_data['staff_id'],
-                'スタッフ名': new_data['name'],
-                '曜日': new_data['day_of_week'].map({v: k for k, v in weekday_map.items()}),
-                '希望開始時間': [minutes_to_time(x) for x in new_data['req_starttime_minutes']],
-                '希望終了時間': [minutes_to_time(x) for x in new_data['req_endtime_minutes']],
-                '予測されたシフトアサインメント': [f"{x:.1%}" for x in assigned_predictions],
-                '予測された開始時間': [minutes_to_time(x) for x in start_predictions],
-                '予測された終了時間': [minutes_to_time(x) for x in end_predictions],
-                '予測された勤務時間': [minutes_to_time(x) for x in hours_predictions]
+            # データがない場合、休みのスタッフのデータを追加
+            if shift_data.empty:
+                results = pd.DataFrame({
+                    'スタッフID': [], 
+                    'スタッフ名': [], 
+                    '日付': [], 
+                    '曜日': [],
+                    '希望開始時間': [], 
+                    '希望終了時間': [], 
+                    '予測されたシフトアサインメント': ['0%'], 
+                    '予測された開始時間': ['00:00'], 
+                    '予測された終了時間': ['00:00'], 
+                    '予測された勤務時間': ['00:00']
+                })
+            else:
+                results = pd.DataFrame({
+                    'スタッフID': shift_data['staff_id'],
+                    'スタッフ名': shift_data['staff_name'],
+                    '日付': shift_data['date'].dt.strftime('%Y-%m-%d'),
+                    '曜日': shift_data['day_of_week'].map(weekday_map),
+                    '希望開始時間': [minutes_to_time(x) for x in shift_data['req_starttime_minutes']],
+                    '希望終了時間': [minutes_to_time(x) for x in shift_data['req_endtime_minutes']],
+                    '予測されたシフトアサインメント': [f"{x:.1%}" for x in assigned_predictions],
+                    '予測された開始時間': [minutes_to_time(x) for x in start_predictions],
+                    '予測された終了時間': [minutes_to_time(x) for x in end_predictions],
+                    '予測された勤務時間': [minutes_to_time(x) for x in hours_predictions]
+                })
+
+            # 休みのスタッフの処理を追加
+            new_row = pd.DataFrame({
+                'スタッフID': [holiday_shift.staff.id],
+                'スタッフ名': [holiday_shift.staff.name],
+                '日付': [holiday_shift.date],
+                '曜日': [holiday_shift.day_of_week.day_name],
+                '希望開始時間': ['00:00'],
+                '希望終了時間': ['00:00'],
+                '予測されたシフトアサインメント': ['0%'],
+                '予測された開始時間': ['00:00'],
+                '予測された終了時間': ['00:00'],
+                '予測された勤務時間': ['00:00']
             })
+
+            results = pd.concat([results, new_row], ignore_index=True)
+
+
 
             print(results.head())  # デバッグ用に結果を確認
 
@@ -414,6 +492,7 @@ def shift_generate(request):
 
     # GETリクエストの場合
     return render(request, 'shiftgenerator/shift_generate.html')
+
 
 
 def shift_results(request):
