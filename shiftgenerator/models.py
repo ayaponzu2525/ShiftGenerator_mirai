@@ -145,8 +145,8 @@ class ShiftPreference(models.Model):
 
     staff = models.ForeignKey(Staff, on_delete=models.CASCADE)
     date = models.DateField()  # 日付を追加
-    starttime = models.TimeField(null=True)
-    endtime = models.TimeField(null=True)
+    starttime = models.TimeField(null=True, blank=True)
+    endtime = models.TimeField(null=True, blank=True)
     confirmed_starttime = models.TimeField(null=True, blank=True)  # 確定開始時刻
     confirmed_endtime = models.TimeField(null=True, blank=True)  # 確定終了時刻
     day_of_week = models.ForeignKey(DayOfWeek, on_delete=models.CASCADE)  # DayOfWeek モデルとの関連付け
