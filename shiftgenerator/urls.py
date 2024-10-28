@@ -19,6 +19,7 @@ urlpatterns = [
     path('get-update-events/', views.get_update_events, name='get-update-events'),
     path('register/', views.register, name='register'),
     path('login/', views.login, name='login'), 
+    path('login-manage/', views.login_manage, name='login-manage'),
     path('shift-management-view/', views.shift_management_view, name='shift-management-view'),
     path('shift-management/', views.shift_management, name='shift-management'),
     path('copy-shifts/', views.copy_shifts, name='copy-shifts'),

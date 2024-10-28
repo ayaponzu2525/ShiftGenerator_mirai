@@ -112,7 +112,7 @@ def copy_shifts(request):
 def superuser_required(view_func):
     decorated_view_func = user_passes_test(
         lambda u: u.is_superuser,
-        login_url='/login/',  # 権限がないユーザーをリダイレクトするURL
+        login_url='/login-manage/',  # 権限がないユーザーをリダイレクトするURL
         redirect_field_name=None
     )(view_func)
     return decorated_view_func
@@ -323,6 +323,25 @@ def login(request):
     else:
         form = AuthenticationForm()
     return render(request, 'registration/login.html', {'form': form})
+
+def login_manage(request):
+    if request.method == 'POST':
+        form = AuthenticationForm(request, data=request.POST)
+        if form.is_valid():
+            username = form.cleaned_data.get('username')
+            password = form.cleaned_data.get('password')
+            user = authenticate(username=username, password=password)
+            if user is not None:
+                auth_login(request, user)
+                messages.success(request, 'ログインに成功しました。')
+                return redirect('shiftgenerator:shift-management-view')
+            else:
+                messages.error(request, 'ユーザー名またはパスワードが無効です。')
+        else:
+            messages.error(request, 'ログイン中にエラーが発生しました。フォームを確認してください。')
+    else:
+        form = AuthenticationForm()
+    return render(request, 'registration/login_manage.html', {'form': form})
 
 # ログ設定
 logger = logging.getLogger(__name__)
