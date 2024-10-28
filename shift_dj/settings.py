@@ -24,9 +24,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-f3jjx)90l8y1&!=gbf&$#ua0)j!()-zjl1e_tba8sqm(2=(@6w'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = False
 
-ALLOWED_HOSTS = ['*'] #すべてのホストを許可　本番ではだめ
+ALLOWED_HOSTS = ['localhost', '.pythonanywhere.com', 'ayaponzu2525.pythonanywhere.com'] 
+
+CSRF_COOKIE_SECURE = True
+SESSION_COOKIE_SECURE = True
+
+from django.core.management.utils import get_random_secret_key
+SECRET_KEY = get_random_secret_key()  
+
 
 
 # Application definition
@@ -135,3 +142,10 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 LOGIN_REDIRECT_URL = 'shift-form'  # または適切なURL名
 LOGOUT_REDIRECT_URL = 'index'  # または適切なURL名
+
+#本番環境ではlocal_settings.pyがないため、
+#local_settings.pyがなくてもエラーでプログラムが落ちないようにtry文を使います。
+try:
+    from .local_settings import *
+except:
+    pass
