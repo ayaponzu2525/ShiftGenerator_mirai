@@ -7,10 +7,11 @@ import pandas as pd
 import numpy as np
 from django.forms.models import model_to_dict
 
-yesterday = timezone.now().date() - timedelta(days=2)
-#today = timezone.now().date()-1
-start_date = yesterday
-end_date = yesterday
+#プログラムテストのための日付指定
+# yesterday = timezone.now().date() - timedelta(days=2)
+today = timezone.now().date()
+start_date = today
+end_date = today
 
 # シフト希望をf取得（勤務希望と休み希望を分けて取得）
 working_shifts = ShiftPreference.objects.filter(
