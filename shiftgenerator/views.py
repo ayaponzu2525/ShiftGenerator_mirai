@@ -150,30 +150,38 @@ def shift_management_view(request):
     return render(request, 'shiftgenerator/shift_management_view.html', context)
 
 
+
 def shift_management(request):
-    # シフト希望データを取得し、confirmed_starttime と confirmed_endtime が None でないものに限定
-    preferences = ShiftPreference.objects.exclude(confirmed_starttime__isnull=True, confirmed_endtime__isnull=True)
-    # スタッフデータを取得
+    date_str = request.GET.get('date')
+    if date_str:
+        try:
+            target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        except ValueError:
+            target_date = timezone.now().date()
+    else:
+        target_date = timezone.now().date()
+
+    preferences = ShiftPreference.objects.filter(
+        date=target_date,
+        confirmed_starttime__isnull=False,
+        confirmed_endtime__isnull=False
+    )
     staff = Staff.objects.all()
 
-    # シフト開始・終了時間を日付と組み合わせる
     for preference in preferences:
-        if preference.confirmed_starttime is not None and preference.confirmed_endtime is not None:
-            # データベースから取得した時間を使用する
-            start_time = preference.confirmed_starttime  # confirmed_starttimeを使用
-            end_time = preference.confirmed_endtime      # confirmed_endtimeを使用
-            # date フィールドと時間を組み合わせて confirmed_starttime を作成
-            preference.confirmed_starttime = datetime.combine(preference.date, start_time)
-            # date フィールドと時間を組み合わせて confirmed_endtime を作成
-            preference.confirmed_endtime = datetime.combine(preference.date, end_time)
+        preference.confirmed_starttime = datetime.combine(preference.date, preference.confirmed_starttime)
+        preference.confirmed_endtime = datetime.combine(preference.date, preference.confirmed_endtime)
 
-    # コンテキストにデータを渡す
     context = {
         'preferences': preferences,
         'staff': staff,
+        'date': target_date.isoformat(),  # HTMLの input type=date 用
+        'selected_date': target_date       # JSの selectedDate 用
     }
 
     return render(request, 'shiftgenerator/shift_management.html', context)
+
+
 
 
 

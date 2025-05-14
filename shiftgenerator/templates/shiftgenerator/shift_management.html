@@ -11,23 +11,44 @@
   </style>
 </head>
 <body>
+  
   <button id="saveChangesBtn">保存</button>
-
   <button id="copyShiftsBtn">現在のシフト希望をもう一度反映（調整しているのが消えます）</button>
 
+  <form method="get" class="form-inline">
+    <label for="date" class="mr-2">表示する日付：</label>
+    <input type="date" name="date" id="date" value="{{ selected_date|date:'Y-m-d' }}" class="form-control mr-2">
+    <button type="submit" class="btn btn-primary">表示</button>
+  </form>
+
+    <!-- ナビゲーション -->
+    <div class="btn-group-custom">
+      <button type="button" class="btn btn-outline-secondary" onclick="moveDate(-7)">← 1週間前</button>
+      <button type="button" class="btn btn-outline-secondary" onclick="moveDate(-1)">← 1日前</button>
+      <button type="button" class="btn btn-outline-secondary" onclick="moveDate(1)">1日後 →</button>
+      <button type="button" class="btn btn-outline-secondary" onclick="moveDate(7)">1週間後 →</button>
+    </div>
   <div id="timeline"></div>
     <script>
+    
+    // スタッフ人数に応じて高さ調整
+    const staffCount = {{ staff|length }};
+    const rowHeight = 40;
+    const extraPadding = 60;
+    const timelineHeight = staffCount * rowHeight + extraPadding;
+    document.getElementById('timeline').style.height = timelineHeight + 'px';
 
+    //const container = document.getElementById('timeline');
 
     // グループデータ（スタッフ）
-    var groups = new vis.DataSet([
+    const groups = new vis.DataSet([
       {% for staff in staff %}
         {id: {{ staff.id }}, content: '{{ staff.name }}'},
       {% endfor %}
     ]);
 
     // アイテムデータ（シフト）
-    var items = new vis.DataSet([
+    const items = new vis.DataSet([
         {% for preference in preferences %}
         {
             id: {{ preference.id }},
@@ -95,7 +116,7 @@
         console.log('Current changes:', changes);
     }
 
-
+    const selectedDate = '{{ selected_date|date:"Y-m-d" }}';
     // オプション設定
     var options = {
         stack: false,
@@ -103,6 +124,14 @@
         groupOrder: 'content',
         orientation: 'top', // 横軸を上に表示
         horizontalScroll: true,
+        zoomable: false,  // 自前でズーム実装するのでfalseに
+        moveable: true,
+        start: new Date(selectedDate + 'T08:00:00'),
+        end: new Date(selectedDate + 'T20:00:00'),
+        min: new Date(selectedDate + 'T08:00:00'),
+        max: new Date(selectedDate + 'T20:00:00'),
+        zoomMin: 1000 * 60 * 15,
+        zoomMax: 1000 * 60 * 60 * 12,
         editable: {
             add: true,
             updateTime: true,
@@ -145,10 +174,46 @@
 var container = document.getElementById('timeline');
 var timeline = new vis.Timeline(container, items, groups, options);
 
+// ホイールイベントハンドラ
+function handleTimelineWheel(e) {
+      // Ctrl + ホイールでズームのみ許可
+      if (e.ctrlKey) {
+        e.preventDefault();
+        
+        const delta = e.deltaY;
+        const zoomFactor = delta < 0 ? 0.8 : 1.2;
+
+        const range = timeline.getWindow();
+        const start = range.start.valueOf();
+        const end = range.end.valueOf();
+        const interval = end - start;
+        const center = (start + end) / 2;
+
+        const newInterval = interval * zoomFactor;
+        const newStart = center - newInterval / 2;
+        const newEnd = center + newInterval / 2;
+        
+        timeline.setWindow(newStart, newEnd, { animation: false });
+      }
+      // それ以外（Shift や通常スクロール）は何もしない
+    }
 
 document.getElementById('saveChangesBtn').addEventListener('click', function() {
   save_shifts();
 });
+
+
+// 日付移動ボタン
+function moveDate(offset) {
+      const dateInput = document.getElementById('date');
+      const currentDate = new Date(dateInput.value || new Date());
+      currentDate.setDate(currentDate.getDate() + offset);
+      const yyyy = currentDate.getFullYear();
+      const mm = String(currentDate.getMonth() + 1).padStart(2, '0');
+      const dd = String(currentDate.getDate()).padStart(2, '0');
+      dateInput.value = `${yyyy}-${mm}-${dd}`;
+      dateInput.form.submit();
+    }
 
 function save_shifts(){
   // 変更がない場合は何もしない
