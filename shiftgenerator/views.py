@@ -120,27 +120,35 @@ def superuser_required(view_func):
 
 @superuser_required
 def shift_management_view(request):
-    # シフト希望データを取得
-    preferences = ShiftPreference.objects.all()
-    # スタッフデータを取得
+    selected_date_str = request.GET.get('date')
+    if selected_date_str:
+        try:
+            selected_date = datetime.strptime(selected_date_str, "%Y-%m-%d").date()
+        except ValueError:
+            selected_date = now().date()
+    else:
+        selected_date = now().date()
+
+    preferences = ShiftPreference.objects.filter(
+        date=selected_date,
+        starttime__isnull=False,
+        endtime__isnull=False
+    ).select_related('staff')
+    
+    print(f"[DEBUG] 対象日付: {selected_date}")
+    print(f"[DEBUG] シフト希望数: {preferences.count()}")
+    for p in preferences:
+        print(f"  - ID: {p.id}, Staff: {p.staff.name}, start: {p.starttime}, end: {p.endtime}")
+
     staff = Staff.objects.all()
 
-    # シフト開始・終了時間を日付と組み合わせる
-    for preference in preferences:
-        # starttime または endtime が None の場合はスキップ
-        if preference.starttime and preference.endtime:
-            # date フィールドと時間を組み合わせて confirmed_starttime を作成
-            preference.starttime = datetime.combine(preference.date, preference.starttime)
-            # date フィールドと時間を組み合わせて confirmed_endtime を作成
-            preference.endtime = datetime.combine(preference.date, preference.endtime)
-
-    # コンテキストにデータを渡す
     context = {
         'preferences': preferences,
         'staff': staff,
+        'selected_date': selected_date
     }
-
     return render(request, 'shiftgenerator/shift_management_view.html', context)
+
 
 def shift_management(request):
     # シフト希望データを取得し、confirmed_starttime と confirmed_endtime が None でないものに限定
@@ -383,119 +391,6 @@ def minutes_to_time(minutes):
     minutes = int(minutes % 60)
     return f"{hours:02}:{minutes:02}"
 
-
-@csrf_exempt  # CSRFトークンの検証を無効化（セキュリティリスクに注意）
-def shift_generate(request):
-    if request.method == 'POST':
-        try:
-            # 例: 取得したい期間を定義（ここでは今週の月曜日から日曜日まで）
-            today = timezone.now().date()
-            start_date = today - timedelta(days=today.weekday())  # 月曜日
-            end_date = start_date + timedelta(days=6)  # 日曜日
-
-            # シフト希望を取得（勤務希望と休み希望を分けて取得）
-            working_shifts = ShiftPreference.objects.filter(
-                date__range=(start_date, end_date),
-                holiday__isnull=True
-            ).select_related('staff', 'day_of_week')
-
-            holiday_shifts = ShiftPreference.objects.filter(
-                date__range=(start_date, end_date),
-                holiday__isnull=False
-            ).select_related('staff', 'day_of_week')
-
-            # シフト希望をDataFrameに変換（working_shiftsのみ）
-            shift_data = pd.DataFrame(list(working_shifts.values(
-                'staff__id', 
-                'staff__name', 
-                'date', 
-                'starttime', 
-                'endtime', 
-                'day_of_week__day_number'
-            )))
-
-            # データの前処理と予測用の準備
-            shift_data.rename(columns={
-                'staff__id': 'staff_id',
-                'staff__name': 'staff_name',
-                'day_of_week__day_number': 'day_of_week'
-            }, inplace=True)
-
-            # 日付が文字列の場合、datetimeに変換
-            if shift_data['date'].dtype == 'object':
-                shift_data['date'] = pd.to_datetime(shift_data['date'], errors='coerce')
-
-            # 希望開始・終了時間を分に変換
-            shift_data['req_starttime_minutes'] = shift_data['starttime'].apply(time_to_minutes)
-            shift_data['req_endtime_minutes'] = shift_data['endtime'].apply(time_to_minutes)
-            shift_data = shift_data[['staff_id','staff_name', 'date','day_of_week', 'req_starttime_minutes', 'req_endtime_minutes']]
-
-            # モデルによる予測
-            shift_data_for_prediction = shift_data[['staff_id', 'day_of_week', 'req_starttime_minutes', 'req_endtime_minutes']]
-            assigned_predictions = rf_assigned.predict(shift_data_for_prediction)
-            start_predictions = rf_start.predict(shift_data_for_prediction)
-            end_predictions = rf_end.predict(shift_data_for_prediction)
-            hours_predictions = rf_hours.predict(shift_data_for_prediction)
-
-            # モデルから曜日のマッピングを取得
-            weekday_map = {day.day_number: day.day_name for day in DayOfWeek.objects.all()}
-
-            # 勤務希望に基づく結果をDataFrameにまとめる
-            results = pd.DataFrame({
-                'スタッフID': shift_data['staff_id'],
-                'スタッフ名': shift_data['staff_name'],
-                '日付': shift_data['date'].dt.strftime('%Y-%m-%d'),
-                '曜日': shift_data['day_of_week'].map(weekday_map),
-                '希望開始時間': [minutes_to_time(x) for x in shift_data['req_starttime_minutes']],
-                '希望終了時間': [minutes_to_time(x) for x in shift_data['req_endtime_minutes']],
-                '予測されたシフトアサインメント': [f"{x:.1%}" for x in assigned_predictions],
-                '予測された開始時間': [minutes_to_time(x) for x in start_predictions],
-                '予測された終了時間': [minutes_to_time(x) for x in end_predictions],
-                '予測された勤務時間': [minutes_to_time(x) for x in hours_predictions]
-            })
-
-            # 休みのスタッフの情報を追加
-            holiday_shifts_list = list(holiday_shifts.values(
-                'staff__id', 'staff__name', 'date', 'day_of_week__day_name'
-            ))
-
-            holiday_rows = pd.DataFrame([{
-                'スタッフID': holiday_shift['staff__id'],
-                'スタッフ名': holiday_shift['staff__name'],
-                '日付': holiday_shift['date'].strftime('%Y-%m-%d'),
-                '曜日': holiday_shift['day_of_week__day_name'],
-                '希望開始時間': '00:00',
-                '希望終了時間': '00:00',
-                '予測されたシフトアサインメント': '0%',
-                '予測された開始時間': '00:00',
-                '予測された終了時間': '00:00',
-                '予測された勤務時間': '00:00'
-            } for holiday_shift in holiday_shifts_list])
-
-            # 勤務希望と休み希望を結合
-            results = pd.concat([results, holiday_rows], ignore_index=True)
-
-            print(results.head())  # デバッグ用に結果を確認
-
-            # 結果をセッションに保存
-            request.session['shift_results'] = results.to_dict(orient='records')
-
-            return redirect('shiftgenerator:shift-results')
-
-        except Exception as e:
-            logger.error(f"Error during prediction: {e}", exc_info=True)
-            return HttpResponseServerError(f"Error during prediction: {e}")
-
-    # GETリクエストの場合
-    return render(request, 'shiftgenerator/shift_generate.html')
-
-
-def shift_results(request):
-    results = request.session.get('shift_results')
-    if results:
-        return render(request, 'shiftgenerator/shift_results.html', {'results': results})
-    else:
-        return redirect('shiftgenerator:shift-generate')
 
 
 @login_required

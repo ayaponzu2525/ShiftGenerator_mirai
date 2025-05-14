@@ -1,66 +1,159 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <link href="https://unpkg.com/vis-timeline/standalone/umd/vis-timeline-graph2d.min.css" rel="stylesheet" type="text/css">
+  <meta charset="UTF-8">
+  <title>シフト管理ビュー</title>
+  <link href="https://unpkg.com/vis-timeline/standalone/umd/vis-timeline-graph2d.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
   <script src="https://unpkg.com/vis-timeline/standalone/umd/vis-timeline-graph2d.min.js"></script>
   <style>
+    .btn-group-custom {
+      margin-top: 10px;
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .card-body {
+      padding: 0;
+    }
     #timeline {
+      position: relative;
       width: 100%;
-      height: 600px;
     }
   </style>
 </head>
-<body>
-  <button id="copyShiftsBtn">現時点でのシフト希望で調整する</button>
-  <div id="timeline"></div>
-  
-  <script>
-    var container = document.getElementById('timeline');
+<body class="bg-light">
+  <div class="container mt-4">
+    <!-- 上部コントロール -->
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <form method="get" class="form-inline">
+        <label for="date" class="mr-2">表示する日付：</label>
+        <input type="date" name="date" id="date" value="{{ selected_date|date:'Y-m-d' }}" class="form-control mr-2">
+        <button type="submit" class="btn btn-primary">表示</button>
+      </form>
+      <button id="copyShiftsBtn" class="btn btn-success">📋 現時点でのシフト希望で調整する</button>
+    </div>
 
-    // グループデータ（スタッフ）
-    var groups = new vis.DataSet([
+    <!-- ナビゲーション -->
+    <div class="btn-group-custom">
+      <button type="button" class="btn btn-outline-secondary" onclick="moveDate(-7)">← 1週間前</button>
+      <button type="button" class="btn btn-outline-secondary" onclick="moveDate(-1)">← 1日前</button>
+      <button type="button" class="btn btn-outline-secondary" onclick="moveDate(1)">1日後 →</button>
+      <button type="button" class="btn btn-outline-secondary" onclick="moveDate(7)">1週間後 →</button>
+    </div>
+
+    <!-- タイムライン -->
+    <div class="card shadow-sm mt-4">
+      <div class="card-body">
+        <div id="timeline"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // スタッフ人数に応じて高さ調整
+    const staffCount = {{ staff|length }};
+    const rowHeight = 40;
+    const extraPadding = 60;
+    const timelineHeight = staffCount * rowHeight + extraPadding;
+    document.getElementById('timeline').style.height = timelineHeight + 'px';
+
+    const container = document.getElementById('timeline');
+
+    const groups = new vis.DataSet([
       {% for staff in staff %}
         {id: {{ staff.id }}, content: '{{ staff.name }}'},
       {% endfor %}
     ]);
 
-    // アイテムデータ（シフト）
-    var items = new vis.DataSet([
-        {% for preference in preferences %}
+    const items = new vis.DataSet([
+      {% for preference in preferences %}
         {
-            id: {{ preference.id }},
-            content: 'Shift {{ preference.id }}',
-            start: '{{ preference.starttime|date:"Y-m-d\\TH:i:s" }}',
-            end: '{{ preference.endtime|date:"Y-m-d\\TH:i:s" }}',
-            group: {{ preference.staff.id }}
+          id: {{ preference.id }},
+          content: 'Shift {{ preference.id }}',
+          start: '{{ preference.date|date:"Y-m-d" }}T{{ preference.starttime|time:"H:i:s" }}',
+          end: '{{ preference.date|date:"Y-m-d" }}T{{ preference.endtime|time:"H:i:s" }}',
+          group: {{ preference.staff.id }}
         },
-        {% endfor %}
+      {% endfor %}
     ]);
 
-    // データ確認
-    console.log('Groups:', groups.get());
-    console.log('Items:', items.get());
-    // オプション設定
-    var options = {
+    const selectedDate = '{{ selected_date|date:"Y-m-d" }}';
+
+    const options = {
       stack: true,
       showCurrentTime: true,
       groupOrder: 'content',
       editable: false,
-      start: new Date('2024-09-18'),
-      end: new Date('2024-09-25'),
-      zoomMin: 1000 * 60 * 15, // ズームの最小単位（15分）
-      zoomMax: 1000 * 60 * 60 * 24 * 30, // ズームの最大単位（30日）
-      horizontalScroll: true, // 水平スクロールを有効にする
-      orientation: 'top', // 横軸を上に表示
-      zoomable: true // 初期状態でズームを有効にする
-    //   min: new Date().setHours(8, 30, 0, 0), // 現在の日付の8:30に設定
-    //   max: new Date().setHours(20, 0, 0, 0), // 現在の日付の20:00に設定
+      zoomable: false,  // 自前でズーム実装するのでfalseに
+      moveable: true,
+      start: new Date(selectedDate + 'T08:00:00'),
+      end: new Date(selectedDate + 'T20:00:00'),
+      min: new Date(selectedDate + 'T08:00:00'),
+      max: new Date(selectedDate + 'T20:00:00'),
+      zoomMin: 1000 * 60 * 15,
+      zoomMax: 1000 * 60 * 60 * 12,
+      horizontalScroll: true,
+      orientation: 'top'
     };
 
-    var timeline = new vis.Timeline(container, items, groups, options);
+    const timeline = new vis.Timeline(container, items, groups, options);
 
-     // ボタンクリックでシフト時間をコピーする
-     document.getElementById('copyShiftsBtn').addEventListener('click', function() {
+    // タイムラインに生成後にイベントリスナーを追加（少し遅延を入れる）
+    setTimeout(() => {
+      // タイムラインのcanvas要素を取得
+      const canvasElements = container.querySelectorAll('canvas');
+      
+      // 各canvas要素にイベントリスナーを追加
+      canvasElements.forEach(canvas => {
+        canvas.addEventListener('wheel', handleTimelineWheel, { passive: false });
+      });
+      
+      // タイムライン自体にもイベントリスナーを追加
+      container.addEventListener('wheel', handleTimelineWheel, { passive: false });
+      
+    }, 500); // タイムラインの描画完了を待つ
+    
+    // ホイールイベントハンドラ
+    function handleTimelineWheel(e) {
+      // Ctrl + ホイールでズームのみ許可
+      if (e.ctrlKey) {
+        e.preventDefault();
+        
+        const delta = e.deltaY;
+        const zoomFactor = delta < 0 ? 0.8 : 1.2;
+
+        const range = timeline.getWindow();
+        const start = range.start.valueOf();
+        const end = range.end.valueOf();
+        const interval = end - start;
+        const center = (start + end) / 2;
+
+        const newInterval = interval * zoomFactor;
+        const newStart = center - newInterval / 2;
+        const newEnd = center + newInterval / 2;
+        
+        timeline.setWindow(newStart, newEnd, { animation: false });
+      }
+      // それ以外（Shift や通常スクロール）は何もしない
+    }
+
+
+    // 日付移動ボタン
+    function moveDate(offset) {
+      const dateInput = document.getElementById('date');
+      const currentDate = new Date(dateInput.value || new Date());
+      currentDate.setDate(currentDate.getDate() + offset);
+      const yyyy = currentDate.getFullYear();
+      const mm = String(currentDate.getMonth() + 1).padStart(2, '0');
+      const dd = String(currentDate.getDate()).padStart(2, '0');
+      dateInput.value = `${yyyy}-${mm}-${dd}`;
+      dateInput.form.submit();
+    }
+
+    // シフトコピー処理
+    document.getElementById('copyShiftsBtn').addEventListener('click', function() {
       fetch('{% url "shiftgenerator:copy-shifts" %}', {
         method: 'POST',
         headers: {
@@ -73,38 +166,12 @@
       .then(data => {
         if (data.success) {
           alert('Shift times copied successfully!');
-          window.location.href = "{% url 'shiftgenerator:shift-management' %}"; // 成功したら遷移
+          window.location.href = "{% url 'shiftgenerator:shift-management' %}";
         } else {
           alert('Failed to copy shift times.');
         }
       });
     });
-    // Ctrlキーを押している間だけズームを有効にする設定
-    let ctrlPressed = false;
-
-    // Ctrlキーが押されたとき
-    document.addEventListener('keydown', function(event) {
-      if (event.ctrlKey) {
-        ctrlPressed = true;
-        timeline.setOptions({ zoomable: true }); // ズームを有効にする
-      }
-    });
-
-    // Ctrlキーが離されたとき
-    document.addEventListener('keyup', function(event) {
-      if (!event.ctrlKey) {
-        ctrlPressed = false;
-        timeline.setOptions({ zoomable: false }); // ズームを無効にする
-      }
-    });
-
-    // ズーム機能を手動で有効にするトグル
-    timeline.on('rangechange', function () {
-      if (!ctrlPressed) {
-        timeline.setOptions({ zoomable: false });
-      }
-    });
-
   </script>
 </body>
 </html>
