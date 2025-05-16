@@ -23,13 +23,45 @@
     }
     #summaryTable th,
     #summaryTable td {
-        min-width: 80px;  /* ←ここで1時間ぶんの幅を揃える */
+      min-width: 80px;
+      box-sizing: border-box; /* ←これを追加！ */
+      padding: 0.5rem;
     }
     #timeline-wrapper {
       border-top: 1px solid #ccc;
       border-bottom: 1px solid #ccc;
+      position: relative;
     }
-
+    
+    /* スタッフ名列を固定 */
+    .vis-labelset {
+      position: sticky;
+      left: 0;
+      z-index: 10;
+      background-color: white;
+    }
+    
+    /* 時間軸を固定するためのスタイル */
+    .time-axis-container {
+      position: sticky;
+      top: 0;
+      background-color: white;
+      z-index: 100;
+      border-bottom: 1px solid #ddd;
+      overflow: hidden;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    /* スクロール同期のための調整 */
+    .timeline-scroll-container {
+      overflow: auto;
+      max-height: 400px;
+    }
+    
+    /* メインのタイムラインの上部に余白を作る */
+    .vis-timeline {
+      padding-top: 40px;
+    }
   </style>
 </head>
 <body class="bg-light">
@@ -59,7 +91,11 @@
     <!-- タイムライン表示 -->
     <div class="card shadow-sm mt-4">
       <div class="card-body" style="padding: 0;">
-        <div id="timeline-wrapper" style="max-height: 400px; overflow-y: auto;">
+        <!-- 時間軸固定用のコンテナ -->
+        <div class="time-axis-container" id="timeAxisContainer"></div>
+        
+        <!-- スクロール可能なタイムラインコンテナ -->
+        <div class="timeline-scroll-container" id="timeline-wrapper">
           <div id="timeline"></div>
         </div>
       </div>
@@ -85,8 +121,6 @@
     const extraPadding = 60;
     const timelineHeight = staffCount * rowHeight + extraPadding;
     document.getElementById('timeline').style.height = timelineHeight + 'px';
-
-    //const container = document.getElementById('timeline');
 
     // グループデータ（スタッフ）
     const groups = new vis.DataSet([
@@ -196,15 +230,6 @@
         onUpdate: function (item, callback) {
           callback(null);  // 完全に何もしない
         },
-        // onUpdate: function (item, callback) {
-        //     item.content = prompt('Edit item text:', item.content);
-        //     if (item.content != null) {
-        //         onTaskBarChanged('update', item);
-        //         callback(item);
-        //     } else {
-        //         callback(null);
-        //     }
-        // },
         onMove: function (item, callback) {
             console.log('Item moved:', item);
             onTaskBarChanged('move', item);
@@ -219,12 +244,117 @@
                 callback(null);
             }
         }
-
     };
 
-var container = document.getElementById('timeline');
-var timeline = new vis.Timeline(container, items, groups, options);
+    // メインのタイムライン
+    var container = document.getElementById('timeline');
+    var timeline = new vis.Timeline(container, items, groups, options);
 
+    // 固定時間軸のセットアップ
+    setupFixedTimeAxis();
+    let labelSetWidth = 150;  // 初期値
+
+
+    // 固定時間軸セットアップ関数 - スタッフ名列幅に合わせる改良版
+    function setupFixedTimeAxis() {
+        // 固定時間軸用のコンテナを取得
+        const timeAxisContainer = document.getElementById('timeAxisContainer');
+        
+        // タイムラインの描画完了を待つ
+        setTimeout(() => {
+            // スタッフ名列の幅を取得
+            const labelSet = document.querySelector('.vis-labelset');
+            labelSetWidth = labelSet ? labelSet.offsetWidth : 150; // デフォルト値は150px
+            
+            console.log('Detected labelset width:', labelSetWidth); // デバッグ用
+            
+            // カスタム時間軸をHTML要素として作成
+            timeAxisContainer.innerHTML = `
+                <div class="custom-time-axis">
+                    <div class="time-container">
+                        <div class="time-cell time-label" style="min-width: ${labelSetWidth}px; max-width: ${labelSetWidth}px;">時間</div>
+                        <div class="time-cell">8:00</div>
+                        <div class="time-cell">9:00</div>
+                        <div class="time-cell">10:00</div>
+                        <div class="time-cell">11:00</div>
+                        <div class="time-cell">12:00</div>
+                        <div class="time-cell">13:00</div>
+                        <div class="time-cell">14:00</div>
+                        <div class="time-cell">15:00</div>
+                        <div class="time-cell">16:00</div>
+                        <div class="time-cell">17:00</div>
+                        <div class="time-cell">18:00</div>
+                        <div class="time-cell">19:00</div>
+                    </div>
+                </div>
+            `;
+            
+            // スタイルを適用
+            const styleId = 'custom-time-axis-style';
+            let style = document.getElementById(styleId);
+            
+            if (!style) {
+                style = document.createElement('style');
+                style.id = styleId;
+                document.head.appendChild(style);
+            }
+            
+            style.textContent = `
+                .custom-time-axis {
+                    width: 100%;
+                    overflow: hidden;
+                    font-family: Arial, sans-serif;
+                    background-color: white;
+                    border-bottom: 1px solid #ddd;
+                    z-index: 100;
+                }
+                
+                .time-container {
+                    display: flex;
+                    height: 40px;
+                    position: relative;
+                }
+                
+                .time-cell {
+                    flex: 1;
+                    text-align: center;
+                    border-right: 1px solid #eee;
+                    padding: 10px 0;
+                    font-size: 14px;
+                    color: #333;
+                    position: relative;
+                }
+                
+                .time-label {
+                    border-right: 1px solid #ccc;
+                    background-color: #f2f2f2;
+                    flex: none;
+                }
+                
+                .time-cell:last-child {
+                    border-right: none;
+                }
+            `;
+            
+            // スクロール連動を設定
+            setupScrollSynchronization();
+            
+        }, 500); // タイムラインの描画が完了するまで少し待つ
+    };
+
+    // スクロール同期設定関数
+    function setupScrollSynchronization() {
+        const scrollContainer = document.querySelector('.timeline-scroll-container');
+        const customTimeAxis = document.querySelector('.custom-time-axis');
+        
+        if (scrollContainer && customTimeAxis) {
+            // 横スクロール同期 - スクロールコンテナのスクロールに合わせて時間軸も移動
+            scrollContainer.addEventListener('scroll', function() {
+                // スクロール位置の同期
+                customTimeAxis.style.transform = `translateX(${scrollContainer.scrollLeft}px)`;
+            });
+        }
+    };
 
   function getGroupColumnWidth() {
     const groupElement = container.querySelector('.vis-group');
@@ -269,8 +399,6 @@ var timeline = new vis.Timeline(container, items, groups, options);
     headerRow.innerHTML = '';
     dataRow.innerHTML = '';
 
-    const groupColWidth = 150;
-
     // 合計スタッフ人数（ユニークな staff ID）
     const allStaffIds = new Set();
     items.get().forEach(item => {
@@ -281,15 +409,15 @@ var timeline = new vis.Timeline(container, items, groups, options);
     // ✅ ヘッダー左端セル → 「合計人数」
     const headerTh = document.createElement('th');
     headerTh.textContent = '合計人数';
-    headerTh.style.minWidth = groupColWidth + 'px';
-    headerTh.style.width = groupColWidth + 'px';
+    headerTh.style.minWidth = labelSetWidth + 'px';
+    headerTh.style.width = labelSetWidth + 'px';
     headerRow.appendChild(headerTh);
 
     // ✅ データ行左端セル → 数値（合計人数）
     const countTd = document.createElement('td');
     countTd.textContent = totalStaffCount;
-    countTd.style.minWidth = groupColWidth + 'px';
-    countTd.style.width = groupColWidth + 'px';
+    countTd.style.minWidth = labelSetWidth + 'px';
+    countTd.style.width = labelSetWidth + 'px';
     dataRow.appendChild(countTd);
 
     // ⏱ 時間帯のヘッダーと人数セルを追加
@@ -303,18 +431,6 @@ var timeline = new vis.Timeline(container, items, groups, options);
       dataRow.appendChild(td);
     });
   };
-
-
-
-
-
-  // タイムラインの表示範囲が変わったときに再描画
-  timeline.on('rangechanged', () => {
-    const range = timeline.getWindow();
-    const slots = generateHourlySlots(range.start, range.end);
-    const counts = calculateStaffCounts(slots);
-    renderSummary(counts);
-  });
 
   // 初回表示用（初期化後すぐに）
   const range = timeline.getWindow();
