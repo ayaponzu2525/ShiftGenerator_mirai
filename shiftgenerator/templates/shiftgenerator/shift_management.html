@@ -1,25 +1,52 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <link href="https://unpkg.com/vis-timeline/standalone/umd/vis-timeline-graph2d.min.css" rel="stylesheet" type="text/css">
+  <meta charset="UTF-8">
+  <title>シフト管理（編集モード）</title>
+  <link href="https://unpkg.com/vis-timeline/standalone/umd/vis-timeline-graph2d.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
   <script src="https://unpkg.com/vis-timeline/standalone/umd/vis-timeline-graph2d.min.js"></script>
   <style>
-    #timeline {
-      width: 100%;
-      height: 600px;
+    .btn-group-custom {
+      margin-top: 10px;
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 10px;
     }
+    .card-body {
+      padding: 0;
+    }
+    #timeline {
+      position: relative;
+      width: 100%;
+    }
+    #summaryTable th,
+    #summaryTable td {
+        min-width: 80px;  /* ←ここで1時間ぶんの幅を揃える */
+    }
+    #timeline-wrapper {
+      border-top: 1px solid #ccc;
+      border-bottom: 1px solid #ccc;
+    }
+
   </style>
 </head>
-<body>
-  
-  <button id="saveChangesBtn">保存</button>
-  <button id="copyShiftsBtn">現在のシフト希望をもう一度反映（調整しているのが消えます）</button>
+<body class="bg-light">
+  <div class="container mt-4">
 
-  <form method="get" class="form-inline">
-    <label for="date" class="mr-2">表示する日付：</label>
-    <input type="date" name="date" id="date" value="{{ selected_date|date:'Y-m-d' }}" class="form-control mr-2">
-    <button type="submit" class="btn btn-primary">表示</button>
-  </form>
+    <!-- 上部操作バー -->
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <form method="get" class="form-inline">
+        <label for="date" class="mr-2">表示する日付：</label>
+        <input type="date" name="date" id="date" value="{{ selected_date|date:'Y-m-d' }}" class="form-control mr-2">
+        <button type="submit" class="btn btn-primary">表示</button>
+      </form>
+      <div>
+        <button id="saveChangesBtn" class="btn btn-primary mr-2">💾 変更を保存</button>
+        <button id="copyShiftsBtn" class="btn btn-success">📋 シフト希望から再反映</button>
+      </div>
+    </div>
 
     <!-- ナビゲーション -->
     <div class="btn-group-custom">
@@ -28,7 +55,28 @@
       <button type="button" class="btn btn-outline-secondary" onclick="moveDate(1)">1日後 →</button>
       <button type="button" class="btn btn-outline-secondary" onclick="moveDate(7)">1週間後 →</button>
     </div>
-  <div id="timeline"></div>
+
+    <!-- タイムライン表示 -->
+    <div class="card shadow-sm mt-4">
+      <div class="card-body" style="padding: 0;">
+        <div id="timeline-wrapper" style="max-height: 400px; overflow-y: auto;">
+          <div id="timeline"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 時間ごとの合計人数表示 -->
+    <div class="mt-3">
+      <table id="summaryTable" class="table table-sm table-bordered text-center bg-white">
+        <thead class="thead-light">
+          <tr id="summaryHeaderRow"></tr>
+        </thead>
+        <tbody>
+          <tr id="summaryDataRow"></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
     <script>
     
     // スタッフ人数に応じて高さ調整
@@ -120,7 +168,7 @@
     // オプション設定
     var options = {
         stack: false,
-        showCurrentTime: true,
+        showCurrentTime: false,
         groupOrder: 'content',
         orientation: 'top', // 横軸を上に表示
         horizontalScroll: true,
@@ -146,14 +194,17 @@
         callback(item);
         },
         onUpdate: function (item, callback) {
-            item.content = prompt('Edit item text:', item.content);
-            if (item.content != null) {
-                onTaskBarChanged('update', item);
-                callback(item);
-            } else {
-                callback(null);
-            }
+          callback(null);  // 完全に何もしない
         },
+        // onUpdate: function (item, callback) {
+        //     item.content = prompt('Edit item text:', item.content);
+        //     if (item.content != null) {
+        //         onTaskBarChanged('update', item);
+        //         callback(item);
+        //     } else {
+        //         callback(null);
+        //     }
+        // },
         onMove: function (item, callback) {
             console.log('Item moved:', item);
             onTaskBarChanged('move', item);
@@ -173,6 +224,104 @@
 
 var container = document.getElementById('timeline');
 var timeline = new vis.Timeline(container, items, groups, options);
+
+
+  function getGroupColumnWidth() {
+    const groupElement = container.querySelector('.vis-group');
+    return groupElement ? groupElement.offsetWidth : 100; // fallback 100px
+  };
+
+  function generateHourlySlots(start, end) {
+    const slots = [];
+    const current = new Date(start);
+    current.setMinutes(0, 0, 0); // 時間ジャストにする
+
+    while (current < end) {
+      const slotStart = new Date(current);
+      const slotEnd = new Date(current);
+      slotEnd.setHours(slotEnd.getHours() + 1);
+      slots.push({ start: slotStart, end: slotEnd });
+      current.setHours(current.getHours() + 1);
+    }
+
+    return slots;
+  };
+
+  function calculateStaffCounts(slots) {
+    return slots.map(slot => {
+      const count = items.get().filter(item => {
+        const itemStart = new Date(item.start);
+        const itemEnd = new Date(item.end);
+        return itemEnd > slot.start && itemStart < slot.end;
+      }).length;
+
+      return {
+        label: `${slot.start.getHours()}:00〜${slot.end.getHours()}:00`,
+        count: count
+      };
+    });
+  };
+
+  function renderSummary(counts) {
+    const headerRow = document.getElementById('summaryHeaderRow');
+    const dataRow = document.getElementById('summaryDataRow');
+
+    headerRow.innerHTML = '';
+    dataRow.innerHTML = '';
+
+    const groupColWidth = 150;
+
+    // 合計スタッフ人数（ユニークな staff ID）
+    const allStaffIds = new Set();
+    items.get().forEach(item => {
+      allStaffIds.add(item.group);  // group はスタッフID
+    });
+    const totalStaffCount = allStaffIds.size;
+
+    // ✅ ヘッダー左端セル → 「合計人数」
+    const headerTh = document.createElement('th');
+    headerTh.textContent = '合計人数';
+    headerTh.style.minWidth = groupColWidth + 'px';
+    headerTh.style.width = groupColWidth + 'px';
+    headerRow.appendChild(headerTh);
+
+    // ✅ データ行左端セル → 数値（合計人数）
+    const countTd = document.createElement('td');
+    countTd.textContent = totalStaffCount;
+    countTd.style.minWidth = groupColWidth + 'px';
+    countTd.style.width = groupColWidth + 'px';
+    dataRow.appendChild(countTd);
+
+    // ⏱ 時間帯のヘッダーと人数セルを追加
+    counts.forEach(c => {
+      const th = document.createElement('th');
+      th.textContent = c.label;
+      headerRow.appendChild(th);
+
+      const td = document.createElement('td');
+      td.textContent = `${c.count}人`;
+      dataRow.appendChild(td);
+    });
+  };
+
+
+
+
+
+  // タイムラインの表示範囲が変わったときに再描画
+  timeline.on('rangechanged', () => {
+    const range = timeline.getWindow();
+    const slots = generateHourlySlots(range.start, range.end);
+    const counts = calculateStaffCounts(slots);
+    renderSummary(counts);
+  });
+
+  // 初回表示用（初期化後すぐに）
+  const range = timeline.getWindow();
+  const slots = generateHourlySlots(range.start, range.end);
+  const counts = calculateStaffCounts(slots);
+  renderSummary(counts);
+
 
 // ホイールイベントハンドラ
 function handleTimelineWheel(e) {
