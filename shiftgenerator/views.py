@@ -26,7 +26,9 @@ import json
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, render, redirect
 from django.contrib.auth.decorators import user_passes_test
-from django.utils.timezone import now
+from django.utils.timezone import now, localdate
+from datetime import date
+
 
 
 
@@ -93,20 +95,37 @@ def save_shifts(request):
 
 
 
+@csrf_exempt
 def copy_shifts(request):
     if request.method == 'POST':
-        # 全ての ShiftPreference オブジェクトを取得
-        preferences = ShiftPreference.objects.all()
-        
-        for preference in preferences:
-            # confirmed_starttime と confirmed_endtime に値をコピー
-            preference.confirmed_starttime = preference.starttime
-            preference.confirmed_endtime = preference.endtime
-            preference.save()
+        try:
+            data = json.loads(request.body)
+            start_date = parse_date(data.get('start_date'))
+            end_date = parse_date(data.get('end_date'))
+            staff_id = data.get('staff_id')
 
-        return JsonResponse({'success': True})
+            if not start_date or not end_date:
+                return JsonResponse({'success': False, 'message': '日付が不正です'}, status=400)
 
-    return JsonResponse({'success': False}, status=400)
+            query = ShiftPreference.objects.filter(
+                date__range=(start_date, end_date),
+                starttime__isnull=False,
+                endtime__isnull=False
+            )
+            if staff_id:
+                query = query.filter(staff_id=staff_id)
+
+            for pref in query:
+                pref.confirmed_starttime = pref.starttime
+                pref.confirmed_endtime = pref.endtime
+                pref.save()
+
+            return JsonResponse({'success': True})
+        except Exception as e:
+            return JsonResponse({'success': False, 'message': str(e)}, status=500)
+
+    return JsonResponse({'success': False, 'message': 'POSTメソッドが必要です'}, status=400)
+
 
 # Superuserのみアクセス可能にするデコレータ
 def superuser_required(view_func):
@@ -125,20 +144,23 @@ def shift_management_view(request):
         try:
             selected_date = datetime.strptime(selected_date_str, "%Y-%m-%d").date()
         except ValueError:
-            selected_date = now().date()
+            selected_date = localdate()
     else:
-        selected_date = now().date()
+        today = localdate()
+        if today.day <= 15:
+            # ✅ 今日が1〜15日 → 今月16日
+            selected_date = date(today.year, today.month, 16)
+        else:
+            # ✅ 今日が16日以降 → 翌月1日
+            next_month = today.month + 1 if today.month < 12 else 1
+            next_year = today.year if today.month < 12 else today.year + 1
+            selected_date = date(next_year, next_month, 1)
 
     preferences = ShiftPreference.objects.filter(
         date=selected_date,
         starttime__isnull=False,
         endtime__isnull=False
     ).select_related('staff')
-    
-    print(f"[DEBUG] 対象日付: {selected_date}")
-    print(f"[DEBUG] シフト希望数: {preferences.count()}")
-    for p in preferences:
-        print(f"  - ID: {p.id}, Staff: {p.staff.name}, start: {p.starttime}, end: {p.endtime}")
 
     staff = Staff.objects.all()
 
@@ -157,9 +179,17 @@ def shift_management(request):
         try:
             target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
         except ValueError:
-            target_date = timezone.now().date()
+            target_date = timezone.localdate()
     else:
-        target_date = timezone.now().date()
+        today = timezone.localdate()
+        if today.day <= 15:
+            # ✅ 1〜15日 → 今月16日
+            target_date = date(today.year, today.month, 16)
+        else:
+            # ✅ 16日〜月末 → 翌月1日
+            next_month = today.month + 1 if today.month < 12 else 1
+            next_year = today.year if today.month < 12 else today.year + 1
+            target_date = date(next_year, next_month, 1)
 
     preferences = ShiftPreference.objects.filter(
         date=target_date,
