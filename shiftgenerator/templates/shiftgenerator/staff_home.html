@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="container mt-5">
+    <div class="text-center mb-5">
+      <h1 class="display-4 mb-2">スタッフホーム</h1>
+      <p class="lead text-secondary">ここから自分のシフト希望を登録・確認できます</p>
+    </div>
+    <div class="row justify-content-center">
+      <div class="col-md-6 mb-4">
+        <div class="card shadow-sm border-info">
+          <div class="card-body text-center">
+            <div class="mb-2" style="font-size:2.5rem; color:#0dcaf0;">
+              <i class="bi bi-calendar-check"></i>
+            </div>
+            <h5 class="card-title">シフト希望カレンダー</h5>
+            <p class="card-text text-muted small mb-3">
+              自分の希望を提出・確認できます
+            </p>
+            <a href="{% url 'shiftgenerator:shift-form' %}" class="btn btn-info btn-block text-white">希望入力ページ</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}

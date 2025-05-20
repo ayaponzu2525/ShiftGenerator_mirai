@@ -51,6 +51,10 @@
         <h2 class="mb-4">シフト希望カレンダー</h2>
         <p>こんにちは, {{ user.username }}さん</p> <!-- ユーザー名の表示 -->
         <p>こんにちは、staff : {{ name }}さん (カスタムユーザー: {{ username }})</p>
+         <a href="{% if user.is_superuser %}{% url 'shiftgenerator:admin-home' %}{% else %}{% url 'shiftgenerator:staff-home' %}{% endif %}" 
+            class="btn btn-primary mb-3">
+            <i class="fas fa-home"></i> ホームに戻る
+        </a>
         <div id="calendar" data-url="{% url 'shiftgenerator:shift-register' %}"></div>
     </div>
     {% if messages %}

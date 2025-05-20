@@ -46,6 +46,10 @@
         th {
             background-color: #e9ecef; /* ヘッダーの背景色 */
         }
+        .btn .fas {
+        vertical-align: middle;
+        /* font-size: 1.1em;  // 必要なら */
+        }
     </style>
 </head>
 <body>
@@ -83,10 +87,18 @@
                 </tr>
             </tbody>
         </table>
-        <form method="post" action="{% url 'shiftgenerator:shift-detail' shift.id %}">
-            {% csrf_token %}
-            <button type="submit" class="btn btn-primary">削除</button>
-        </form>
+            <div class="d-flex justify-content-center mt-4">
+                <form method="post" action="{% url 'shiftgenerator:shift-detail' shift.id %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-primary">
+                        削除
+                    </button>
+                </form>
+                <a href="{% url 'shiftgenerator:shift-form' %}" class="btn btn-secondary ml-2">
+                    <i class="fas fa-arrow-left" style="vertical-align: middle;"></i> シフト希望カレンダーに戻る
+                </a>
+
+            </div>
     </div>
 
     <!-- Bootstrap JS and dependencies (optional) -->

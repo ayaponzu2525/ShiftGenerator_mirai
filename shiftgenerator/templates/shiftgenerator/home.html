@@ -6,9 +6,14 @@
     <div class="row justify-content-center">
       <div class="col-md-4">
     
-        <a href="{% url 'shiftgenerator:login' %}" class="btn btn-secondary btn-block mb-3">ログイン</a>
-        <a href="{% url 'shiftgenerator:shift-management-view' %}" class="btn btn-primary btn-block mt-3">シフト管理画面</a>      
+        <a href="{% url 'shiftgenerator:login' %}" class="btn btn-secondary btn-block mb-3">ログイン</a> 
+        
+        <!-- シフト希望確認用（閲覧専用ビュー） -->
+        <!-- <a href="{% url 'shiftgenerator:shift-management-view' %}" class="btn btn-info btn-block mt-2">シフト提出状況（現時点）</a> -->
+        <!-- 編集画面（管理者などシフト決定・調整用） -->
+        <!-- <a href="{% url 'shiftgenerator:shift-management' %}" class="btn btn-primary btn-block mt-3">シフト管理（編集画面）</a> -->
 
+        
       </div>
     </div>
   </div>

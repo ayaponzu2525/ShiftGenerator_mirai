@@ -1,485 +1,145 @@
 <!DOCTYPE html>
-<html>
+<html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>シフト管理ビュー</title>
-  <link href="https://unpkg.com/vis-timeline/standalone/umd/vis-timeline-graph2d.min.css" rel="stylesheet">
+  <title>シフト提出状況（集計ダッシュボード）</title>
   <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
-  <script src="https://unpkg.com/vis-timeline/standalone/umd/vis-timeline-graph2d.min.js"></script>
+  <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
   <style>
-    .btn-group-custom {
-      margin-top: 10px;
-      display: flex;
-      justify-content: center;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-    .card-body {
-      padding: 0;
-    }
-    #timeline {
-      position: relative;
-      width: 100%;
-    }
-    #summaryTable th,
-    #summaryTable td {
-      box-sizing: border-box;
-      padding: 8px 4px;  /* 少しだけ狭く */
-      border: 1px solid #dee2e6;
-    }
-
-    #timeline-wrapper {
-      border-top: 1px solid #ccc;
-      border-bottom: 1px solid #ccc;
-      position: relative;
-    }
-    
-    /* スタッフ名列を固定 */
-    .vis-labelset {
-      position: sticky;
-      left: 0;
-      z-index: 10;
-      background-color: white;
-    }
-    
-    /* 時間軸を固定するためのスタイル */
-    .time-axis-container {
-      position: sticky;
-      top: 0;
-      background-color: white;
-      z-index: 100;
-      border-bottom: 1px solid #ddd;
-      overflow: hidden;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    
-    /* スクロール同期のための調整 */
-    .timeline-scroll-container {
-      overflow: auto;
-      max-height: 400px;
-    }
-    
-    /* メインのタイムラインの上部に余白を作る */
-    .vis-timeline {
-      padding-top: 40px;
-    }
+    .period-inputs label { font-weight: 500; }
+    .status-badge { font-size: 1rem; padding: 0.5em 1em; border-radius: 1em; }
+    .status-complete { background: #4caf50; color: #fff; }
+    .status-partial { background: #ffc107; color: #333; }
+    .status-none { background: #dc3545; color: #fff; }
+    .table td, .table th { vertical-align: middle !important; }
+    .mt-3 { margin-top: 1rem !important; }
+    .mb-4 { margin-bottom: 1.5rem !important; }
   </style>
 </head>
 <body class="bg-light">
-  <div class="container mt-4">
-    <!-- 上部コントロール -->
-    <div class="d-flex justify-content-between align-items-center mb-3">
-      <form method="get" class="form-inline">
-        <label for="date" class="mr-2">表示する日付：</label>
-        <input type="date" name="date" id="date" value="{{ selected_date|date:'Y-m-d' }}" class="form-control mr-2">
-        <button type="submit" class="btn btn-primary">表示</button>
-      </form>
-      <div class="form-inline mb-2">
-      <label class="mr-2">反映対象期間：</label>
-      <input type="date" id="startDate" class="form-control mr-2">
-      <span>〜</span>
-      <input type="date" id="endDate" class="form-control ml-2">
-      </div>
-
-      <button id="copyShiftsBtn" class="btn btn-success">📋 現時点でのシフト希望で調整する</button>
-    </div>
-
-    <!-- ナビゲーション -->
-    <div class="btn-group-custom">
-      <button type="button" class="btn btn-outline-secondary" onclick="moveDate(-7)">← 1週間前</button>
-      <button type="button" class="btn btn-outline-secondary" onclick="moveDate(-1)">← 1日前</button>
-      <button type="button" class="btn btn-outline-secondary" onclick="moveDate(1)">1日後 →</button>
-      <button type="button" class="btn btn-outline-secondary" onclick="moveDate(7)">1週間後 →</button>
-    </div>
-
-       <!-- タイムライン表示 -->
-    <div class="card shadow-sm mt-4">
-      <div class="card-body" style="padding: 0;">
-        <!-- 時間軸固定用のコンテナ -->
-        <div class="time-axis-container" id="timeAxisContainer"></div>
-        
-        <!-- スクロール可能なタイムラインコンテナ -->
-        <div class="timeline-scroll-container" id="timeline-wrapper">
-          <div id="timeline"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 時間ごとの合計人数表示 -->
-    <div class="mt-3">
-      <table id="summaryTable" class="table table-sm table-bordered text-center bg-white">
-        <thead class="thead-light">
-          <tr id="summaryHeaderRow"></tr>
-        </thead>
-        <tbody>
-          <tr id="summaryDataRow"></tr>
-        </tbody>
-      </table>
-    </div>
+<div class="container mt-4">
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <h2 class="mb-0">シフト提出状況（集計）</h2>
+    <a href="{% url 'shiftgenerator:admin-home' %}" class="btn btn-outline-primary">
+      <i class="fas fa-home mr-2"></i>管理者ホームに戻る
+    </a>
   </div>
 
-  <script>
-    // スタッフ人数に応じて高さ調整
-    const staffCount = {{ staff|length }};
-    const rowHeight = 40;
-    const extraPadding = 60;
-    const timelineHeight = staffCount * rowHeight + extraPadding;
-    document.getElementById('timeline').style.height = timelineHeight + 'px';
+  <!-- 期間選択フォーム -->
+  <div class="period-inputs d-flex flex-wrap align-items-end mb-3" style="gap:16px;">
+    <label for="startDate" class="mb-0">集計期間：</label>
+    <input type="date" id="startDate" class="form-control" style="min-width: 140px;">
+    <span class="mx-2">〜</span>
+    <input type="date" id="endDate" class="form-control" style="min-width: 140px;">
+    <button id="reloadBtn" class="btn btn-primary ml-3">集計する</button>
+    <button id="exportBtn" class="btn btn-success ml-2">Excelでダウンロード</button>
+  </div>
 
-    const container = document.getElementById('timeline');
+  <!-- 提出日ごとサマリ表示（ここにグラフ/テーブル等をJSで挿入）-->
+  <div id="summary"></div>
+</div>
 
-    const groups = new vis.DataSet([
-      {% for staff in staff %}
-        {id: {{ staff.id }}, content: '{{ staff.name }}'},
-      {% endfor %}
-    ]);
+<script>
+  // ===== あなたの関数そのまま =====
+  function getNextHalfMonthRange() {
+    const today = new Date();
+    const y = today.getFullYear();
+    const m = today.getMonth();
+    const d = today.getDate();
 
-    const items = new vis.DataSet([
-      {% for preference in preferences %}
-        {
-          id: {{ preference.id }},
-          content: 'Shift {{ preference.id }}',
-          start: '{{ preference.date|date:"Y-m-d" }}T{{ preference.starttime|time:"H:i:s" }}',
-          end: '{{ preference.date|date:"Y-m-d" }}T{{ preference.endtime|time:"H:i:s" }}',
-          group: {{ preference.staff.id }}
-        },
-      {% endfor %}
-    ]);
+    let start, end;
+    if (d <= 15) {
+      // 1〜15日 → 今月16日〜月末
+      start = new Date(y, m, 16);
+      end   = new Date(y, m + 1, 0); // 月末日
+    } else {
+      // 16日以降 → 来月1日〜15日
+      start = new Date(y, m + 1, 1);
+      end   = new Date(y, m + 1, 15);
+    }
 
-    const selectedDate = '{{ selected_date|date:"Y-m-d" }}';
+    function formatDateLocal(date) {
+      const yyyy = date.getFullYear();
+      const mm   = String(date.getMonth() + 1).padStart(2, '0');
+      const dd   = String(date.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}`;
+    }
 
-    const options = {
-      stack: true,
-      showCurrentTime: false,
-      groupOrder: 'content',
-      editable: false,
-      zoomable: false,  // 自前でズーム実装するのでfalseに
-      moveable: true,
-      start: new Date(selectedDate + 'T08:00:00'),
-      end: new Date(selectedDate + 'T20:00:00'),
-      min: new Date(selectedDate + 'T08:00:00'),
-      max: new Date(selectedDate + 'T20:00:00'),
-      zoomMin: 1000 * 60 * 15,
-      zoomMax: 1000 * 60 * 60 * 12,
-      horizontalScroll: true,
-      orientation: 'top'
+    return {
+      start: formatDateLocal(start),
+      end:   formatDateLocal(end)
     };
+  }
 
-    const timeline = new vis.Timeline(container, items, groups, options);
-
-    // タイムラインに生成後にイベントリスナーを追加（少し遅延を入れる）
-    setTimeout(() => {
-      // タイムラインのcanvas要素を取得
-      const canvasElements = container.querySelectorAll('canvas');
-      
-      // 各canvas要素にイベントリスナーを追加
-      canvasElements.forEach(canvas => {
-        canvas.addEventListener('wheel', handleTimelineWheel, { passive: false });
-      });
-      
-      // タイムライン自体にもイベントリスナーを追加
-      container.addEventListener('wheel', handleTimelineWheel, { passive: false });
-      
-    }, 500); // タイムラインの描画完了を待つ
-
-
-    // 固定時間軸のセットアップ
-    setupFixedTimeAxis();
-    let labelSetWidth = 150;  // 初期値
-
-
-    // 固定時間軸セットアップ関数 - スタッフ名列幅に合わせる改良版
-    function setupFixedTimeAxis() {
-        // 固定時間軸用のコンテナを取得
-        const timeAxisContainer = document.getElementById('timeAxisContainer');
-        
-        // タイムラインの描画完了を待つ
-        setTimeout(() => {
-            // スタッフ名列の幅を取得
-            const labelSet = document.querySelector('.vis-labelset');
-            labelSetWidth = labelSet ? labelSet.offsetWidth : 150; // デフォルト値は150px
-            
-            console.log('Detected labelset width:', labelSetWidth); // デバッグ用
-            
-            // カスタム時間軸をHTML要素として作成
-            timeAxisContainer.innerHTML = `
-                <div class="custom-time-axis">
-                    <div class="time-container">
-                        <div class="time-cell time-label" style="min-width: ${labelSetWidth}px; max-width: ${labelSetWidth}px;">時間</div>
-                        <div class="time-cell">8:00</div>
-                        <div class="time-cell">9:00</div>
-                        <div class="time-cell">10:00</div>
-                        <div class="time-cell">11:00</div>
-                        <div class="time-cell">12:00</div>
-                        <div class="time-cell">13:00</div>
-                        <div class="time-cell">14:00</div>
-                        <div class="time-cell">15:00</div>
-                        <div class="time-cell">16:00</div>
-                        <div class="time-cell">17:00</div>
-                        <div class="time-cell">18:00</div>
-                        <div class="time-cell">19:00</div>
-                    </div>
-                </div>
-            `;
-            
-            // スタイルを適用
-            const styleId = 'custom-time-axis-style';
-            let style = document.getElementById(styleId);
-            
-            if (!style) {
-                style = document.createElement('style');
-                style.id = styleId;
-                document.head.appendChild(style);
-            }
-            
-            style.textContent = `
-                .custom-time-axis {
-                    width: 100%;
-                    overflow: hidden;
-                    font-family: Arial, sans-serif;
-                    background-color: white;
-                    border-bottom: 1px solid #ddd;
-                    z-index: 100;
-                }
-                
-                .time-container {
-                    display: flex;
-                    height: 40px;
-                    position: relative;
-                }
-                
-                .time-cell {
-                    flex: 1;
-                    text-align: center;
-                    border-right: 1px solid #eee;
-                    padding: 10px 0;
-                    font-size: 14px;
-                    color: #333;
-                    position: relative;
-                }
-                
-                .time-label {
-                    border-right: 1px solid #ccc;
-                    background-color: #f2f2f2;
-                    flex: none;
-                }
-                
-                .time-cell:last-child {
-                    border-right: none;
-                }
-            `;
-            
-            // スクロール連動を設定
-            setupScrollSynchronization();
-            // setupScrollSynchronization(); のすぐあとにこれを置く
-            const start = new Date(selectedDate + 'T08:00:00');
-            const end = new Date(selectedDate + 'T20:00:00');
-            const slots = generateHourlySlots(start, end);
-            const counts = calculateStaffCounts(slots);
-            renderSummary(counts);
-
-            
-        }, 500); // タイムラインの描画が完了するまで少し待つ
-    };
-
-    // スクロール同期設定関数
-    function setupScrollSynchronization() {
-        const scrollContainer = document.querySelector('.timeline-scroll-container');
-        const customTimeAxis = document.querySelector('.custom-time-axis');
-        
-        if (scrollContainer && customTimeAxis) {
-            // 横スクロール同期 - スクロールコンテナのスクロールに合わせて時間軸も移動
-            scrollContainer.addEventListener('scroll', function() {
-                // スクロール位置の同期
-                customTimeAxis.style.transform = `translateX(${scrollContainer.scrollLeft}px)`;
-            });
-        }
-    };
-
-  function getGroupColumnWidth() {
-    const groupElement = container.querySelector('.vis-group');
-    return groupElement ? groupElement.offsetWidth : 100; // fallback 100px
-  };
-
-  function generateHourlySlots(start, end) {
-    const slots = [];
-    const current = new Date(start);
-    current.setMinutes(0, 0, 0); // 時間ジャストにする
-
-    while (current < end) {
-      const slotStart = new Date(current);
-      const slotEnd = new Date(current);
-      slotEnd.setHours(slotEnd.getHours() + 1);
-      slots.push({ start: slotStart, end: slotEnd });
-      current.setHours(current.getHours() + 1);
-    }
-
-    return slots;
-  };
-
-  function calculateStaffCounts(slots) {
-    return slots.map(slot => {
-      const count = items.get().filter(item => {
-        const itemStart = new Date(item.start);
-        const itemEnd = new Date(item.end);
-        return itemEnd > slot.start && itemStart < slot.end;
-      }).length;
-
-      return {
-        label: `${slot.start.getHours()}:00〜${slot.end.getHours()}:00`,
-        count: count
-      };
-    });
-  };
-
-  function renderSummary(counts) {
-    const headerRow = document.getElementById('summaryHeaderRow');
-    const dataRow = document.getElementById('summaryDataRow');
-
-    headerRow.innerHTML = '';
-    dataRow.innerHTML = '';
-
-    // 合計スタッフ人数（ユニークな staff ID）
-    const allStaffIds = new Set();
-    items.get().forEach(item => {
-      allStaffIds.add(item.group);  // group はスタッフID
-    });
-    const totalStaffCount = allStaffIds.size;
-
-    // ✅ ヘッダー左端セル → 「合計人数」
-    const headerTh = document.createElement('th');
-    headerTh.textContent = '合計人数';
-    headerTh.style.minWidth = labelSetWidth + 'px';
-    headerTh.style.width = labelSetWidth + 'px';
-    headerRow.appendChild(headerTh);
-
-    // ✅ データ行左端セル → 数値（合計人数）
-    const countTd = document.createElement('td');
-    countTd.textContent = totalStaffCount;
-    countTd.style.minWidth = labelSetWidth + 'px';
-    countTd.style.width = labelSetWidth + 'px';
-    dataRow.appendChild(countTd);
-
-    // ⏱ 時間帯のヘッダーと人数セルを追加
-    counts.forEach(c => {
-      const th = document.createElement('th');
-      th.textContent = c.label;
-      headerRow.appendChild(th);
-
-      const td = document.createElement('td');
-      td.textContent = `${c.count}人`;
-      dataRow.appendChild(td);
-    });
-  };
-
-  // 初回表示用（初期化後すぐに）
-  const range = timeline.getWindow();
-  const slots = generateHourlySlots(range.start, range.end);
-  const counts = calculateStaffCounts(slots);
-  renderSummary(counts);
-    
-    // ホイールイベントハンドラ
-    function handleTimelineWheel(e) {
-      // Ctrl + ホイールでズームのみ許可
-      if (e.ctrlKey) {
-        e.preventDefault();
-        
-        const delta = e.deltaY;
-        const zoomFactor = delta < 0 ? 0.8 : 1.2;
-
-        const range = timeline.getWindow();
-        const start = range.start.valueOf();
-        const end = range.end.valueOf();
-        const interval = end - start;
-        const center = (start + end) / 2;
-
-        const newInterval = interval * zoomFactor;
-        const newStart = center - newInterval / 2;
-        const newEnd = center + newInterval / 2;
-        
-        timeline.setWindow(newStart, newEnd, { animation: false });
-      }
-      // それ以外（Shift や通常スクロール）は何もしない
-    }
-
-
-    // 日付移動ボタン
-    function moveDate(offset) {
-      const dateInput = document.getElementById('date');
-      const currentDate = new Date(dateInput.value || new Date());
-      currentDate.setDate(currentDate.getDate() + offset);
-      const yyyy = currentDate.getFullYear();
-      const mm = String(currentDate.getMonth() + 1).padStart(2, '0');
-      const dd = String(currentDate.getDate()).padStart(2, '0');
-      dateInput.value = `${yyyy}-${mm}-${dd}`;
-      dateInput.form.submit();
-    }
-
-    // シフトコピー用 日付入力のデフォルト値を設定
-    window.addEventListener('DOMContentLoaded', () => {
-      const startInput = document.getElementById('startDate');
-      const endInput   = document.getElementById('endDate');
-
-      const today = new Date();          // ローカル(JST)日付
-      const y = today.getFullYear();
-      const m = today.getMonth();        // 0=Jan
-      const d = today.getDate();
-
-      // 「いまどちらの半月か」で次の半月を決定
-      let start, end;
-      if (d <= 15) {
-        // 1〜15日にいる → 今月 16日〜月末
-        start = new Date(y, m, 16);      // 今月16日
-        end   = new Date(y, m + 1, 0);   // 今月末日（m+1, 0 で月末）
-      } else {
-        // 16日以降 → 来月 1日〜15日
-        start = new Date(y, m + 1, 1);   // 来月1日
-        end   = new Date(y, m + 1, 15);  // 来月15日
-      }
-
-      // ローカル時刻のまま YYYY-MM-DD 形式に整形
-      function formatDateLocal(date) {
-        const yyyy = date.getFullYear();
-        const mm   = String(date.getMonth() + 1).padStart(2, '0');
-        const dd   = String(date.getDate()).padStart(2, '0');
-        return `${yyyy}-${mm}-${dd}`;
-      }
-
-      startInput.value = formatDateLocal(start); // 例: 2025-06-01
-      endInput.value   = formatDateLocal(end);   // 例: 2025-06-15
-    });
-
-
-
-    // シフトコピー処理
-    document.getElementById('copyShiftsBtn').addEventListener('click', function () {
-    const start = document.getElementById('startDate').value;
-    const end = document.getElementById('endDate').value;
-
-    if (!start || !end) {
-      alert('期間を指定してください');
-      return;
-    }
-
-    fetch('{% url "shiftgenerator:copy-shifts" %}', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRFToken': '{{ csrf_token }}'
-      },
-      body: JSON.stringify({ start_date: start, end_date: end })
-    })
-    .then(response => response.json())
-    .then(data => {
-      if (data.success) {
-        alert('指定期間のシフト希望を反映しました。');
-        window.location.href = "{% url 'shiftgenerator:shift-management' %}";
-      } else {
-        alert('反映に失敗しました。');
-      }
-    });
+  // ===== ページ初期表示でデフォルト期間をセット =====
+  $(document).ready(function(){
+    const range = getNextHalfMonthRange();
+    $('#startDate').val(range.start);
+    $('#endDate').val(range.end);
+    loadSummary(range.start, range.end);
   });
 
-  </script>
+  // ===== 集計・再読み込みボタン =====
+  $('#reloadBtn').on('click', function(){
+    const start = $('#startDate').val();
+    const end   = $('#endDate').val();
+    loadSummary(start, end);
+  });
+
+  // ===== ダウンロードボタン =====
+  $('#exportBtn').on('click', function(){
+    const start = $('#startDate').val();
+    const end   = $('#endDate').val();
+    window.location.href = `/shift-management-export/?start=${start}&end=${end}`;
+  });
+
+  // ===== 集計結果の取得＆描画（Ajaxでサンプル） =====
+  function loadSummary(start, end) {
+    $('#summary').html('<div class="text-center text-muted my-5">読み込み中...</div>');
+    // サンプルAPI呼び出し。実際はviews.pyで作って返す
+    $.getJSON('/shift-management-summary/', {start, end}, function(data){
+      let html = `
+        <table class="table table-bordered bg-white">
+          <thead>
+            <tr>
+              <th>日付</th>
+              <th>提出済み人数</th>
+              <th>未提出スタッフ</th>
+              <th>提出状況</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+      data.summary.forEach(day => {
+        let statusClass = 'status-none', statusText = '未提出';
+        if (day.submitted === day.total) {
+          statusClass = 'status-complete'; statusText = '全員提出';
+        } else if (day.submitted > 0) {
+          statusClass = 'status-partial'; statusText = '一部提出';
+        }
+        html += `
+          <tr>
+            <td>${day.date}</td>
+            <td><span class="badge badge-pill badge-primary" style="font-size:1em;">${day.submitted} / ${day.total}</span></td>
+            <td>
+              ${day.unsubmitted.length > 0 
+                ? day.unsubmitted.map(name => `<span class="badge badge-danger mr-1">${name}</span>`).join('') 
+                : '<span class="badge badge-success">全員提出</span>'}
+            </td>
+            <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+          </tr>
+        `;
+      });
+      html += `</tbody></table>`;
+      $('#summary').html(html);
+    })
+    .fail(function(){
+      $('#summary').html('<div class="text-danger my-5 text-center">集計データの取得に失敗しました。</div>');
+    });
+  }
+</script>
+
+<!-- fontawesome for home icon -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
 </body>
 </html>

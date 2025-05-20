@@ -25,9 +25,10 @@ from .forms import ShiftPreferenceForm
 import json
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, render, redirect
-from django.contrib.auth.decorators import user_passes_test
 from django.utils.timezone import now, localdate
-from datetime import date
+from datetime import datetime, date
+from django.contrib.auth.decorators import login_required, user_passes_test
+
 
 
 
@@ -171,8 +172,41 @@ def shift_management_view(request):
     }
     return render(request, 'shiftgenerator/shift_management_view.html', context)
 
+@superuser_required
+def shift_calendar_view(request):
+    # 必要なロジック（たとえば、今までshift_management_viewでやっていたカレンダーロジックなど）
+    selected_date_str = request.GET.get('date')
+    if selected_date_str:
+        try:
+            selected_date = datetime.strptime(selected_date_str, "%Y-%m-%d").date()
+        except ValueError:
+            selected_date = localdate()
+    else:
+        today = localdate()
+        if today.day <= 15:
+            selected_date = date(today.year, today.month, 16)
+        else:
+            next_month = today.month + 1 if today.month < 12 else 1
+            next_year = today.year if today.month < 12 else today.year + 1
+            selected_date = date(next_year, next_month, 1)
 
+    preferences = ShiftPreference.objects.filter(
+        date=selected_date,
+        starttime__isnull=False,
+        endtime__isnull=False
+    ).select_related('staff')
 
+    staff = Staff.objects.all()
+
+    context = {
+        'preferences': preferences,
+        'staff': staff,
+        'selected_date': selected_date
+    }
+    # テンプレートをカレンダー用に（新ファイルに）
+    return render(request, 'shiftgenerator/shift_calendar_view.html', context)
+
+@superuser_required
 def shift_management(request):
     date_str = request.GET.get('date')
     if date_str:
@@ -183,30 +217,40 @@ def shift_management(request):
     else:
         today = timezone.localdate()
         if today.day <= 15:
-            # ✅ 1〜15日 → 今月16日
             target_date = date(today.year, today.month, 16)
         else:
-            # ✅ 16日〜月末 → 翌月1日
             next_month = today.month + 1 if today.month < 12 else 1
             next_year = today.year if today.month < 12 else today.year + 1
             target_date = date(next_year, next_month, 1)
 
+    # --- 確定シフト（編集対象） ---
     preferences = ShiftPreference.objects.filter(
         date=target_date,
         confirmed_starttime__isnull=False,
         confirmed_endtime__isnull=False
     )
+
+    # --- 希望シフト（original/wish） ---
+    wish_preferences = ShiftPreference.objects.filter(
+        date=target_date,
+        starttime__isnull=False,
+        endtime__isnull=False,
+        # confirmed_starttime=None でもOK（未確定のみ出したい場合）
+    )
+
     staff = Staff.objects.all()
 
     for preference in preferences:
         preference.confirmed_starttime = datetime.combine(preference.date, preference.confirmed_starttime)
         preference.confirmed_endtime = datetime.combine(preference.date, preference.confirmed_endtime)
 
+    # ここでテンプレートに「wish_preferences」も渡す！
     context = {
         'preferences': preferences,
         'staff': staff,
-        'date': target_date.isoformat(),  # HTMLの input type=date 用
-        'selected_date': target_date       # JSの selectedDate 用
+        'wish_preferences': wish_preferences,    # 追加
+        'date': target_date.isoformat(),
+        'selected_date': target_date
     }
 
     return render(request, 'shiftgenerator/shift_management.html', context)
@@ -361,7 +405,10 @@ def login(request):
             if user is not None:
                 auth_login(request, user)
                 messages.success(request, 'ログインに成功しました。')
-                return redirect('shiftgenerator:shift-form')
+                if user.is_superuser:
+                    return redirect('shiftgenerator:admin-home')
+                else:
+                    return redirect('shiftgenerator:staff-home')
             else:
                 messages.error(request, 'ユーザー名またはパスワードが無効です。')
         else:
@@ -369,6 +416,8 @@ def login(request):
     else:
         form = AuthenticationForm()
     return render(request, 'registration/login.html', {'form': form})
+
+
 
 def login_manage(request):
     if request.method == 'POST':
@@ -389,28 +438,23 @@ def login_manage(request):
         form = AuthenticationForm()
     return render(request, 'registration/login_manage.html', {'form': form})
 
+
+@login_required
+@user_passes_test(lambda u: u.is_superuser)
+def admin_home(request):
+    return render(request, 'shiftgenerator/admin_home.html')
+
+@login_required
+def staff_home(request):
+    # 管理者でアクセスされた場合はadmin_homeへリダイレクトしてもOK
+    if request.user.is_superuser:
+        return redirect('shiftgenerator:admin-home')
+    return render(request, 'shiftgenerator/staff_home.html')
+
 # ログ設定
 logger = logging.getLogger(__name__)
 
-# CSVファイルとモデルのディレクトリ
-model_dir = os.path.join(settings.BASE_DIR, 'shiftgenerator/models/RandomForestmodels')
-# csv_file_path = os.path.join(settings.BASE_DIR, 'shiftgenerator/requ_shiftdata', 'req_shiftdata.csv')
-# staff_file_path = os.path.join(settings.BASE_DIR, 'shiftgenerator/staffdata', 'staff.csv')
 
-# モデルのロード
-with open(os.path.join(model_dir, 'rf_assigned_model.pkl'), 'rb') as f:
-    rf_assigned = pickle.load(f)
-with open(os.path.join(model_dir, 'rf_start_model.pkl'), 'rb') as f:
-    rf_start = pickle.load(f)
-with open(os.path.join(model_dir, 'rf_end_model.pkl'), 'rb') as f:
-    rf_end = pickle.load(f)
-with open(os.path.join(model_dir, 'rf_hours_model.pkl'), 'rb') as f:
-    rf_hours = pickle.load(f)
-
-print(type(rf_assigned))  # 確認
-
-import sklearn
-print(sklearn.__version__)
 
 # 時間を分単位に変換する関数
 def time_to_minutes(time_str):

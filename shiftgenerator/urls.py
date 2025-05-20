@@ -18,8 +18,11 @@ urlpatterns = [
     path('register/', views.register, name='register'),
     path('login/', views.login, name='login'), 
     path('login-manage/', views.login_manage, name='login-manage'),
+    path('admin-home/', views.admin_home, name='admin-home'),
+    path('staff-home/', views.staff_home, name='staff-home'),
     path('shift-management-view/', views.shift_management_view, name='shift-management-view'),
     path('shift-management/', views.shift_management, name='shift-management'),
+    path('shift-calendar-view/', views.shift_calendar_view, name='shift-calendar-view'),
     path('copy-shifts/', views.copy_shifts, name='copy-shifts'),
     path('save-shifts/', views.save_shifts, name='save-shifts'),
 
