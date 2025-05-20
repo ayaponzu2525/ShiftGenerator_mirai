@@ -1,5 +1,6 @@
 from django.urls import path
 from . import views
+from django.contrib.auth import views as auth_views
 
 
 app_name = 'shiftgenerator'
@@ -17,10 +18,12 @@ urlpatterns = [
     path('get-update-events/', views.get_update_events, name='get-update-events'),
     path('register/', views.register, name='register'),
     path('login/', views.login, name='login'), 
+    path('accounts/login/', auth_views.LoginView.as_view(), name='accounts-login'),
     path('login-manage/', views.login_manage, name='login-manage'),
     path('admin-home/', views.admin_home, name='admin-home'),
     path('staff-home/', views.staff_home, name='staff-home'),
     path('shift-management-view/', views.shift_management_view, name='shift-management-view'),
+    path('shift-management-summary/', views.shift_management_summary, name='shift-management-summary'),
     path('shift-management/', views.shift_management, name='shift-management'),
     path('shift-calendar-view/', views.shift_calendar_view, name='shift-calendar-view'),
     path('copy-shifts/', views.copy_shifts, name='copy-shifts'),

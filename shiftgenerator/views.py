@@ -1,33 +1,28 @@
 from django.http import HttpResponse, JsonResponse, HttpResponseServerError
 from django.views.decorators.csrf import csrf_exempt
+from django.conf import settings
+from django.contrib.auth import login as auth_login, authenticate
+from django.contrib.auth.forms import AuthenticationForm
+from django.contrib import messages
+from django.utils import timezone
+from django.utils.dateparse import parse_date, parse_time, parse_datetime
+from django.contrib.auth.decorators import login_required, user_passes_test
+from django.shortcuts import get_object_or_404, render, redirect
+from django.utils.timezone import now, localdate
+
 import pandas as pd
 import pickle
 import os
-from django.conf import settings
 import numpy as np
 import logging
-from datetime import datetime, timedelta, time
-
 import pytz
-from django.contrib.auth import login
-from .forms import CustomUserCreationForm, ShiftPreferenceForm
-from django.contrib.auth import authenticate, login as auth_login
-from django.contrib.auth.forms import AuthenticationForm
-from django.contrib.auth import login as auth_login, authenticate
-from django.contrib import messages 
-from django.utils import timezone
-from django.utils.dateparse import parse_date, parse_time,parse_datetime
-from django.contrib.auth.decorators import login_required
-from django.views.decorators.csrf import csrf_exempt
-from .models import ShiftPreference, Staff, DayOfWeek, ShiftHistory,ShiftPreference,Holiday
-import traceback
-from .forms import ShiftPreferenceForm
 import json
-from django.http import JsonResponse
-from django.shortcuts import get_object_or_404, render, redirect
-from django.utils.timezone import now, localdate
-from datetime import datetime, date
-from django.contrib.auth.decorators import login_required, user_passes_test
+import traceback
+from datetime import datetime, date, timedelta, time
+import csv
+
+from .forms import CustomUserCreationForm, ShiftPreferenceForm
+from .models import ShiftPreference, Staff, DayOfWeek, ShiftHistory, Holiday
 
 
 
@@ -132,45 +127,50 @@ def copy_shifts(request):
 def superuser_required(view_func):
     decorated_view_func = user_passes_test(
         lambda u: u.is_superuser,
-        login_url='/login-manage/',  # 権限がないユーザーをリダイレクトするURL
+        login_url='/login/',  # 権限がないユーザーをリダイレクトするURL
         redirect_field_name=None
     )(view_func)
     return decorated_view_func
 
 
-@superuser_required
+@user_passes_test(lambda u: u.is_superuser)
 def shift_management_view(request):
-    selected_date_str = request.GET.get('date')
-    if selected_date_str:
-        try:
-            selected_date = datetime.strptime(selected_date_str, "%Y-%m-%d").date()
-        except ValueError:
-            selected_date = localdate()
-    else:
-        today = localdate()
-        if today.day <= 15:
-            # ✅ 今日が1〜15日 → 今月16日
-            selected_date = date(today.year, today.month, 16)
-        else:
-            # ✅ 今日が16日以降 → 翌月1日
-            next_month = today.month + 1 if today.month < 12 else 1
-            next_year = today.year if today.month < 12 else today.year + 1
-            selected_date = date(next_year, next_month, 1)
+    # スタッフリストと今日の日付を渡すだけでもOK
+    staff = Staff.objects.all()
+    return render(request, 'shiftgenerator/shift_management_view.html', {
+        'staff': staff,
+        # 必要ならここで初期値
+    })
 
-    preferences = ShiftPreference.objects.filter(
-        date=selected_date,
-        starttime__isnull=False,
-        endtime__isnull=False
-    ).select_related('staff')
+@superuser_required
+def shift_management_summary(request):
+    # 期間指定を受け取る
+    start = request.GET.get('start')
+    end = request.GET.get('end')
+    if not (start and end):
+        return JsonResponse({'error': '期間が指定されていません'}, status=400)
 
     staff = Staff.objects.all()
+    start_date = datetime.strptime(start, "%Y-%m-%d").date()
+    end_date = datetime.strptime(end, "%Y-%m-%d").date()
+    days = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
 
-    context = {
-        'preferences': preferences,
-        'staff': staff,
-        'selected_date': selected_date
-    }
-    return render(request, 'shiftgenerator/shift_management_view.html', context)
+    summary = []
+    for day in days:
+        submitted = []
+        unsubmitted = []
+        for s in staff:
+            if ShiftPreference.objects.filter(staff=s, date=day).exists():
+                submitted.append(s.name)
+            else:
+                unsubmitted.append(s.name)
+        summary.append({
+            "date": day.strftime("%Y-%m-%d"),
+            "submitted": len(submitted),
+            "total": staff.count(),
+            "unsubmitted": unsubmitted,
+        })
+    return JsonResponse({"summary": summary})
 
 @superuser_required
 def shift_calendar_view(request):
