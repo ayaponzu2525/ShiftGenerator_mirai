@@ -25,6 +25,7 @@ from .forms import CustomUserCreationForm, ShiftPreferenceForm
 from .models import ShiftPreference, Staff, DayOfWeek, ShiftHistory, Holiday, Skill, StaffSkill
 from django.contrib.auth.hashers import make_password
 from django.contrib import messages
+from django.db.models import Exists, OuterRef
 
 
 
@@ -294,21 +295,37 @@ def shift_management(request):
         # confirmed_starttime=None でもOK（未確定のみ出したい場合）
     )
 
-    staff = Staff.objects.all()
+         # 有効スタッフ（is_active=True）は全員表示
+    active_staff = list(Staff.objects.filter(is_active=True))
+
+    # 無効スタッフ（is_active=False）はその日「確定シフト」がある場合だけ表示
+    inactive_staff = list(
+        Staff.objects.filter(is_active=False).filter(
+            Exists(
+                ShiftPreference.objects.filter(
+                    staff=OuterRef('pk'),
+                    date=target_date,
+                    confirmed_starttime__isnull=False,
+                    confirmed_endtime__isnull=False
+                )
+            )
+        )
+    )
+
+    # Pythonで合体＆ID順ソート
+    staff = sorted(active_staff + inactive_staff, key=lambda s: s.id)
 
     for preference in preferences:
         preference.confirmed_starttime = datetime.combine(preference.date, preference.confirmed_starttime)
         preference.confirmed_endtime = datetime.combine(preference.date, preference.confirmed_endtime)
 
-    # ここでテンプレートに「wish_preferences」も渡す！
     context = {
         'preferences': preferences,
         'staff': staff,
-        'wish_preferences': wish_preferences,    # 追加
+        'wish_preferences': wish_preferences,
         'date': target_date.isoformat(),
         'selected_date': target_date
     }
-
     return render(request, 'shiftgenerator/shift_management.html', context)
 
 

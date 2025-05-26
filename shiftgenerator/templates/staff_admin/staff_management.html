@@ -1,10 +1,15 @@
-<link rel="stylesheet" href="https://cdn.datatables.net/1.13.4/css/jquery.dataTables.min.css">
-<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-<script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
-
-{% extends "base.html" %}
-{% block content %}
-<div class="container">
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>スタッフ管理</title>
+  <link rel="stylesheet" href="https://cdn.datatables.net/1.13.4/css/jquery.dataTables.min.css">
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
+</head>
+<body>
+<div class="container mt-5">
     <h2>スタッフ管理</h2>
     <div class="mb-2">
       <a href="?show=all" class="btn btn-outline-secondary btn-sm {% if show_all %}active{% endif %}">全員表示</a>
@@ -46,7 +51,7 @@
 $(document).ready(function() {
     $('#staffTable').DataTable({
         language: {
-            "sSearch": "検索:",
+            "sSearch": "スタッフ名検索:",
             "oPaginate": {
                 "sFirst":    "最初",
                 "sLast":     "最後",
@@ -62,4 +67,5 @@ $(document).ready(function() {
     });
 });
 </script>
-{% endblock %}
+</body>
+</html>
