@@ -11,6 +11,12 @@
 <body>
 <div class="container mt-5">
     <h2>スタッフ管理</h2>
+    <h4>新規スタッフ登録</h4>
+    <a href="{% url 'shiftgenerator:register' %}" class="btn btn-primary">新規登録ページへ</a>
+    <a href="{% url 'shiftgenerator:admin-home' %}" class="btn btn-outline-primary">
+        <i class="fas fa-home mr-2"></i> 管理者ホームに戻る
+    </a>
+
     <div class="mb-2">
       <a href="?show=all" class="btn btn-outline-secondary btn-sm {% if show_all %}active{% endif %}">全員表示</a>
       <a href="?" class="btn btn-outline-primary btn-sm {% if not show_all %}active{% endif %}">有効のみ表示</a>
@@ -42,11 +48,8 @@
         </tr>
         {% endfor %}
         </tbody>
-    </table>
-    <hr>
-    <h4>新規スタッフ登録</h4>
-    <a href="{% url 'shiftgenerator:register' %}" class="btn btn-primary">新規登録ページへ</a>
-</div>
+    </table>  
+    </div>
 <script>
 $(document).ready(function() {
     $('#staffTable').DataTable({

@@ -192,12 +192,7 @@ def superuser_required(view_func):
 
 @user_passes_test(lambda u: u.is_superuser)
 def shift_management_view(request):
-    # スタッフリストと今日の日付を渡すだけでもOK
-    staff = Staff.objects.all()
-    return render(request, 'shiftgenerator/shift_management_view.html', {
-        'staff': staff,
-        # 必要ならここで初期値
-    })
+    return render(request, 'shiftgenerator/shift_management_view.html')
 
 @superuser_required
 def shift_management_summary(request):
@@ -207,7 +202,9 @@ def shift_management_summary(request):
     if not (start and end):
         return JsonResponse({'error': '期間が指定されていません'}, status=400)
 
-    staff = Staff.objects.all()
+    # 有効スタッフだけに変更！
+    staff = Staff.objects.filter(is_active=True)
+    staff_names = list(staff.values_list('name', flat=True))
     start_date = datetime.strptime(start, "%Y-%m-%d").date()
     end_date = datetime.strptime(end, "%Y-%m-%d").date()
     days = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
@@ -224,8 +221,8 @@ def shift_management_summary(request):
         summary.append({
             "date": day.strftime("%Y-%m-%d"),
             "submitted": len(submitted),
-            "total": staff.count(),
-            "unsubmitted": unsubmitted,
+            "total": staff.count(),           # ここも有効スタッフ数のみ
+            "unsubmitted": unsubmitted,       # ここも有効スタッフのみ
         })
     return JsonResponse({"summary": summary})
 
@@ -253,7 +250,26 @@ def shift_calendar_view(request):
         endtime__isnull=False
     ).select_related('staff')
 
-    staff = Staff.objects.all()
+    # 有効スタッフ（is_active=True）は全員表示
+    active_staff = list(Staff.objects.filter(is_active=True))
+
+    # 無効スタッフ（is_active=False）はその日「確定シフト」がある場合だけ表示
+    inactive_staff = list(
+        Staff.objects.filter(is_active=False).filter(
+            Exists(
+                ShiftPreference.objects.filter(
+                    staff=OuterRef('pk'),
+                    date=selected_date,
+                    confirmed_starttime__isnull=False,
+                    confirmed_endtime__isnull=False
+                )
+            )
+        )
+    )
+
+    # Pythonで合体＆ID順ソート
+    staff = sorted(active_staff + inactive_staff, key=lambda s: s.id)
+
 
     context = {
         'preferences': preferences,
