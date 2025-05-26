@@ -78,20 +78,7 @@
         <i class="fas fa-home"></i> 管理者ホームに戻る
       </a>
     </div>
-    
-    <!-- 2行目 -->
-    <div class="d-flex align-items-center mb-3 flex-wrap" style="gap: 20px;">
-      <label class="mb-0 mr-2">反映対象期間：</label>
-      <input type="date" id="startDate" class="form-control mr-2" style="min-width:130px;max-width:170px;">
-      <span class="mx-2">〜</span>
-      <input type="date" id="endDate" class="form-control mr-2" style="min-width:130px;max-width:170px;">
-      <button id="copyShiftsBtn" class="btn btn-success">📋 シフト希望から再反映</button>
-    </div>
-  </div>
-
-
-
-    <!-- ナビゲーション -->
+      <!-- ナビゲーション -->
     <div class="btn-group-custom">
       <button type="button" class="btn btn-outline-secondary" onclick="moveDate(-7)">← 1週間前</button>
       <button type="button" class="btn btn-outline-secondary" onclick="moveDate(-1)">← 1日前</button>
@@ -421,71 +408,6 @@
       dateInput.value = `${yyyy}-${mm}-${dd}`;
       dateInput.form.submit();
     }
-
-    // シフトコピー用 日付入力のデフォルト値を設定
-    window.addEventListener('DOMContentLoaded', () => {
-      const startInput = document.getElementById('startDate');
-      const endInput   = document.getElementById('endDate');
-
-      const today = new Date();          // ローカル(JST)日付
-      const y = today.getFullYear();
-      const m = today.getMonth();        // 0=Jan
-      const d = today.getDate();
-
-      // 「いまどちらの半月か」で次の半月を決定
-      let start, end;
-      if (d <= 15) {
-        // 1〜15日にいる → 今月 16日〜月末
-        start = new Date(y, m, 16);      // 今月16日
-        end   = new Date(y, m + 1, 0);   // 今月末日（m+1, 0 で月末）
-      } else {
-        // 16日以降 → 来月 1日〜15日
-        start = new Date(y, m + 1, 1);   // 来月1日
-        end   = new Date(y, m + 1, 15);  // 来月15日
-      }
-
-      // ローカル時刻のまま YYYY-MM-DD 形式に整形
-      function formatDateLocal(date) {
-        const yyyy = date.getFullYear();
-        const mm   = String(date.getMonth() + 1).padStart(2, '0');
-        const dd   = String(date.getDate()).padStart(2, '0');
-        return `${yyyy}-${mm}-${dd}`;
-      }
-
-      startInput.value = formatDateLocal(start); // 例: 2025-06-01
-      endInput.value   = formatDateLocal(end);   // 例: 2025-06-15
-    });
-
-
-
-    // シフトコピー処理
-    document.getElementById('copyShiftsBtn').addEventListener('click', function () {
-    const start = document.getElementById('startDate').value;
-    const end = document.getElementById('endDate').value;
-
-    if (!start || !end) {
-      alert('期間を指定してください');
-      return;
-    }
-
-    fetch('{% url "shiftgenerator:copy-shifts" %}', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRFToken': '{{ csrf_token }}'
-      },
-      body: JSON.stringify({ start_date: start, end_date: end })
-    })
-    .then(response => response.json())
-    .then(data => {
-      if (data.success) {
-        alert('指定期間のシフト希望を反映しました。');
-        window.location.href = "{% url 'shiftgenerator:shift-management' %}";
-      } else {
-        alert('反映に失敗しました。');
-      }
-    });
-  });
 
   </script>
 </body>

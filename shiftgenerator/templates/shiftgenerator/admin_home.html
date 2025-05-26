@@ -9,14 +9,17 @@
 
       <!-- シフト管理 -->
       <div class="col-md-4 mb-4">
-        <div class="card shadow-sm border-primary h-100">
+        <div class="card shadow-sm border-success h-100">
           <div class="card-body text-center">
-            <div class="mb-2" style="font-size:2.5rem; color:#0d6efd;">
-              <i class="bi bi-pencil-square"></i>
-            </div>
+             <div class="mb-2" style="font-size:2.5rem; color:#0d6efd;">
+            <i class="bi bi-eye"></i>
+        </div>
             <h5 class="card-title">シフト管理</h5>
-            <p class="card-text text-muted small mb-3">シフトの編集・確定作業はこちら</p>
-            <a href="{% url 'shiftgenerator:shift-management' %}" class="btn btn-primary btn-block">管理画面へ</a>
+            <div class="d-flex flex-column align-items-center gap-2">
+            <p class="card-text text-muted small mb-3">シフト・スタッフの編集・確定作業はこちら</p>
+            <a href="{% url 'shiftgenerator:shift-management' %}" class="btn btn-primary btn-block mb-2 w-100">管理画面へ</a>
+            <a href="{% url 'shiftgenerator:staff-management' %}" class="btn btn-primary btn-block w-100">スタッフ管理画面へ</a>
+            </div>
           </div>
         </div>
       </div>
@@ -34,7 +37,7 @@
             <a href="{% url 'shiftgenerator:shift-management-view' %}" class="btn btn-success btn-block mb-2 w-100">
             集計ダッシュボード
             </a>
-            <a href="{% url 'shiftgenerator:shift-calendar-view' %}" class="btn btn-outline-success btn-block w-100">
+            <a href="{% url 'shiftgenerator:shift-calendar-view' %}" class="btn btn-success btn-block w-100">
             カレンダービュー
             </a>
         </div>

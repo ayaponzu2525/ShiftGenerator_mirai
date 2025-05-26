@@ -1,0 +1,65 @@
+<link rel="stylesheet" href="https://cdn.datatables.net/1.13.4/css/jquery.dataTables.min.css">
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
+
+{% extends "base.html" %}
+{% block content %}
+<div class="container">
+    <h2>スタッフ管理</h2>
+    <div class="mb-2">
+      <a href="?show=all" class="btn btn-outline-secondary btn-sm {% if show_all %}active{% endif %}">全員表示</a>
+      <a href="?" class="btn btn-outline-primary btn-sm {% if not show_all %}active{% endif %}">有効のみ表示</a>
+    </div>
+    <table id="staffTable" class="table table-bordered table-hover">
+        <thead>
+        <tr>
+            <th>ID</th><th>名前</th><th>状態</th><th>スキル</th><th>アカウント</th><th>操作</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for s in staff_list %}
+        <tr>
+            <td>{{ s.id }}</td>
+            <td>{{ s.name }}</td>
+            <td>{% if s.is_active %}<span class="text-success">有効</span>{% else %}<span class="text-danger">無効</span>{% endif %}</td>
+            <td>
+                <a href="{% url 'shiftgenerator:staff-skill' s.id %}">編集</a>
+            </td>
+            <td>
+                <a href="{% url 'shiftgenerator:staff-password' s.id %}">パスワード変更</a>
+            </td>
+            <td>
+                <a href="{% url 'shiftgenerator:staff-toggle' s.id %}"
+                   class="btn btn-sm {% if s.is_active %}btn-warning{% else %}btn-success{% endif %}">
+                    {% if s.is_active %}無効化{% else %}有効化{% endif %}
+                </a>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    <hr>
+    <h4>新規スタッフ登録</h4>
+    <a href="{% url 'shiftgenerator:register' %}" class="btn btn-primary">新規登録ページへ</a>
+</div>
+<script>
+$(document).ready(function() {
+    $('#staffTable').DataTable({
+        language: {
+            "sSearch": "検索:",
+            "oPaginate": {
+                "sFirst":    "最初",
+                "sLast":     "最後",
+                "sNext":     "次",
+                "sPrevious": "前"
+            },
+            "sLengthMenu": "_MENU_ 件表示",
+            "sZeroRecords": "該当するデータがありません",
+            "sInfo": " _TOTAL_ 件中 _START_ 件から _END_ 件まで表示",
+            "sInfoEmpty": " 0 件中 0 から 0 まで表示",
+            "sInfoFiltered": "（全 _MAX_ 件より抽出）"
+        }
+    });
+});
+</script>
+{% endblock %}

@@ -22,7 +22,9 @@ from datetime import datetime, date, timedelta, time
 import csv
 
 from .forms import CustomUserCreationForm, ShiftPreferenceForm
-from .models import ShiftPreference, Staff, DayOfWeek, ShiftHistory, Holiday
+from .models import ShiftPreference, Staff, DayOfWeek, ShiftHistory, Holiday, Skill, StaffSkill
+from django.contrib.auth.hashers import make_password
+from django.contrib import messages
 
 
 
@@ -30,6 +32,60 @@ from .models import ShiftPreference, Staff, DayOfWeek, ShiftHistory, Holiday
 
 def index(request):
     return render(request, 'shiftgenerator/home.html')
+
+@user_passes_test(lambda u: u.is_superuser)
+def staff_management(request):
+    show_all = request.GET.get('show') == 'all'
+    staff_list = Staff.objects.all() if show_all else Staff.objects.filter(is_active=True)
+    return render(request, 'staff_admin/staff_management.html', {
+        'staff_list': staff_list,
+        'show_all': show_all,
+    })
+
+
+@user_passes_test(lambda u: u.is_superuser)
+def staff_disable(request, staff_id):
+    staff = get_object_or_404(Staff, id=staff_id)
+    staff.is_active = False
+    staff.save()
+    messages.success(request, f'{staff.name} を無効化しました')
+    return redirect('shiftgenerator:staff-management')
+
+@user_passes_test(lambda u: u.is_superuser)
+def staff_skill(request, staff_id):
+    staff = get_object_or_404(Staff, id=staff_id)
+    skills = Skill.objects.all()
+    if request.method == 'POST':
+        skill_ids = request.POST.getlist('skills')
+        # 既存を全削除→再追加の単純方式
+        StaffSkill.objects.filter(staff=staff).delete()
+        for skill_id in skill_ids:
+            StaffSkill.objects.create(staff=staff, skill_id=skill_id)
+        messages.success(request, 'スキルを更新しました')
+        return redirect('shiftgenerator:staff-management')
+    # 登録済みスキルID
+    owned = StaffSkill.objects.filter(staff=staff).values_list('skill_id', flat=True)
+    return render(request, 'staff_admin/staff_skill.html', {'staff': staff, 'skills': skills, 'owned': owned})
+
+@user_passes_test(lambda u: u.is_superuser)
+def staff_password(request, staff_id):
+    staff = get_object_or_404(Staff, id=staff_id)
+    if request.method == 'POST':
+        new_pass = request.POST.get('password')
+        if staff.custom_user:
+            staff.custom_user.set_password(new_pass)
+            staff.custom_user.save()
+            messages.success(request, 'パスワードを変更しました')
+        return redirect('shiftgenerator:staff-management')
+    return render(request, 'staff_admin/staff_password.html', {'staff': staff})
+
+@user_passes_test(lambda u: u.is_superuser)
+def staff_toggle_active(request, staff_id):
+    staff = get_object_or_404(Staff, id=staff_id)
+    staff.is_active = not staff.is_active  # トグル切替
+    staff.save()
+    return redirect('shiftgenerator:staff-management')
+
 
 
 def save_shifts(request):

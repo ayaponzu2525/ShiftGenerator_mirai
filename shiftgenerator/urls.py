@@ -28,5 +28,13 @@ urlpatterns = [
     path('shift-calendar-view/', views.shift_calendar_view, name='shift-calendar-view'),
     path('copy-shifts/', views.copy_shifts, name='copy-shifts'),
     path('save-shifts/', views.save_shifts, name='save-shifts'),
+    
+    path('staff-management/', views.staff_management, name='staff-management'),
+    path('staff-disable/<int:staff_id>/', views.staff_disable, name='staff-disable'),
+    path('staff-skill/<int:staff_id>/', views.staff_skill, name='staff-skill'),
+    path('staff-password/<int:staff_id>/', views.staff_password, name='staff-password'),
+    path('staff-toggle/<int:staff_id>/', views.staff_toggle_active, name='staff-toggle'),
+
+
 
 ]
