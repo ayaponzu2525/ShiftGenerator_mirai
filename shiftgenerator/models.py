@@ -44,7 +44,7 @@ updated_at: レコードが最後に更新された日時。自動的に更新�
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
 from django.utils import timezone
-
+from datetime import datetime
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
 from django.utils import timezone
@@ -171,3 +171,46 @@ class ShiftHistory(models.Model):
 
     def __str__(self):
         return f'{self.staff.name} - {self.starttime} to {self.endtime}'
+
+# シフト提出期間設定用
+class ShiftSubmissionPeriod(models.Model):
+    label = models.CharField(max_length=64, blank=True)  # blank=Trueで空欄許可
+    start_date = models.DateField()
+    end_date = models.DateField()
+    is_active = models.BooleanField(default=True)
+    is_default = models.BooleanField(default=False)  # True:通常, False:臨時
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        # start_date, end_dateがstr型の場合は変換
+        if isinstance(self.start_date, str):
+            self.start_date = datetime.strptime(self.start_date, "%Y-%m-%d").date()
+        if isinstance(self.end_date, str):
+            self.end_date = datetime.strptime(self.end_date, "%Y-%m-%d").date()
+        if not self.label:
+            self.label = f"{self.start_date.strftime('%Y年%m月%d日')}～{self.end_date.strftime('%m月%d日')}"
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.start_date.strftime('%Y年%m月%d日')}～{self.end_date.strftime('%m月%d日')}"
+    
+class ShiftSubmission(models.Model):
+    staff = models.ForeignKey(Staff, on_delete=models.CASCADE)
+    period = models.ForeignKey(ShiftSubmissionPeriod, on_delete=models.CASCADE)
+    # ShiftPreferenceは複数なのでM2MでもOK。まずは提出レコードとして1:多で設計
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    comment = models.TextField(blank=True, null=True)      # 再提出理由など
+    submission_status = models.CharField(
+        max_length=16,
+        choices=[
+            ('初回', '初回'), 
+            ('再提出', '再提出'),
+            ('遅刻', '遅刻'),
+        ],
+        default='初回'
+    )
+
+    def __str__(self):
+        return f"{self.staff.name} {self.period.label} {self.submission_status}"

@@ -5,8 +5,10 @@
   <title>シフト提出状況（集計ダッシュボード）</title>
   <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
   <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+  <!-- Bootstrap JS（jQueryの後で） -->
+  <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+
   <style>
-    .period-inputs label { font-weight: 500; }
     .status-badge { font-size: 1rem; padding: 0.5em 1em; border-radius: 1em; }
     .status-complete { background: #4caf50; color: #fff; }
     .status-partial { background: #ffc107; color: #333; }
@@ -20,74 +22,296 @@
   </style>
 </head>
 <body class="bg-light">
-<div class="container mt-4">
-  <div class="d-flex justify-content-between align-items-center mb-4">
-    <h2 class="mb-0">シフト提出状況（集計）</h2>
-    <a href="{% url 'shiftgenerator:admin-home' %}" class="btn btn-outline-primary">
-      <i class="fas fa-home mr-2"></i>管理者ホームに戻る
-    </a>
+  {% load shift_tags %}
+
+  <!-- 提出期間管理エリア -->
+<div class="card mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <div>
+      <strong>提出期間管理</strong>
+    </div>
+    <button class="btn btn-primary btn-sm" data-toggle="modal" data-target="#createPeriodModal">新規期間作成</button>
+  </div>
+  <div class="card-body py-2">
+    <div class="mb-2"><b>受付中の期間：</b>
+      {% for period in active_periods %}
+        {% with s=period.start_date e=period.end_date %}
+          {% with days=s|days_diff:e %}
+            <button
+              class="btn btn-info btn-sm mb-1 mr-1"
+              data-toggle="modal"
+              data-target="#editPeriodModal"
+              data-id="{{ period.id }}"
+              data-start="{{ s|date:'Y-m-d' }}"
+              data-end="{{ e|date:'Y-m-d' }}"
+              data-is-default="{{ period.is_default }}"
+              data-pattern="{% if days == 6 %}week{% elif days >= 12 and days <= 16 %}halfmonth{% elif days >= 27 and days <= 31 %}month{% else %}custom{% endif %}"
+            >
+              {{ s|date:"Y年m月d日" }}～{{ e|date:"m月d日" }}
+            </button>
+          {% endwith %}
+        {% endwith %}
+      {% empty %}
+        <span class="text-muted">現在受付中の期間はありません</span>
+      {% endfor %}
+    </div>
   </div>
 
-  <!-- 期間選択フォーム -->
-  <div class="period-inputs d-flex flex-wrap align-items-end mb-3" style="gap:16px;">
-    <label for="startDate" class="mb-0">集計期間：</label>
-    <input type="date" id="startDate" class="form-control" style="min-width: 140px;">
-    <span class="mx-2">〜</span>
-    <input type="date" id="endDate" class="form-control" style="min-width: 140px;">
-    <button id="reloadBtn" class="btn btn-primary ml-3">集計する</button>
-    <button id="exportBtn" class="btn btn-success ml-2">Excelでダウンロード</button>
+  <!-- 期間編集モーダル -->
+  <div class="modal fade" id="editPeriodModal" tabindex="-1" role="dialog" aria-labelledby="editPeriodModalLabel" aria-hidden="true">
+  <div class="modal-dialog" role="document">
+    <form method="post" id="editPeriodForm" action="">
+      {% csrf_token %}
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="editPeriodModalLabel">期間を編集</h5>
+          <button type="button" class="close" data-dismiss="modal" aria-label="閉じる"><span aria-hidden="true">&times;</span></button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>周期パターン</label>
+            <select id="editPeriodPattern" class="form-control">
+              <option value="halfmonth">半月ごと</option>
+              <option value="month">1か月ごと</option>
+              <option value="week">1週間ごと</option>
+              <option value="custom">カスタム（日付は手入力）</option>
+            </select>
+          </div>
+          <input type="hidden" name="period_id" id="editPeriodId">
+          <div class="form-group">
+            <label>開始日</label>
+            <input type="date" name="start_date" id="editStartDate" class="form-control" required>
+          </div>
+          <div class="form-group">
+            <label>終了日</label>
+            <input type="date" name="end_date" id="editEndDate" class="form-control" required>
+          </div>
+          <div class="form-group">
+            <label>種別</label>
+            <select name="is_default" id="editIsDefault" class="form-control">
+              <option value="True">デフォルト期間（通常）</option>
+              <option value="False">臨時期間</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="submit" class="btn btn-primary">保存</button>
+          <button type="button" class="btn btn-danger" id="deletePeriodBtn">削除</button>
+          <button type="button" class="btn btn-secondary" data-dismiss="modal">キャンセル</button>
+        </div>
+      </div>
+    </form>
   </div>
+</div>
 
-  <!-- 提出日ごとサマリ表示（ここにグラフ/テーブル等をJSで挿入）-->
-  <div id="summary"></div>
+
+<!-- 新規期間作成モーダル -->
+ <!-- デバッグ用： -->
+<div class="modal fade" id="createPeriodModal" tabindex="-1" role="dialog" aria-labelledby="createPeriodModalLabel" aria-hidden="true">
+  <div class="modal-dialog" role="document">
+    <form method="post" action="{% url 'shiftgenerator:shift-management-view' %}">
+      {% csrf_token %}
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="createPeriodModalLabel">新規提出期間を作成</h5>
+          <button type="button" class="close" data-dismiss="modal" aria-label="閉じる"><span aria-hidden="true">&times;</span></button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <div class="form-group">
+              <label>周期パターン</label>
+              <select id="periodPattern" class="form-control">
+                <option value="halfmonth" {% if latest_pattern == "halfmonth" %}selected{% endif %}>半月ごと</option>
+                <option value="month" {% if latest_pattern == "month" %}selected{% endif %}>1か月ごと</option>
+                <option value="week" {% if latest_pattern == "week" %}selected{% endif %}>1週間ごと</option>
+                <option value="custom" {% if latest_pattern == "custom" %}selected{% endif %}>カスタム（日付は手入力）</option>
+              </select>
+            </div>
+            <label>開始日</label>
+            <input type="date" id="startDate" name="start_date" class="form-control" required>
+          </div>
+          <div class="form-group">
+            <label>終了日</label>
+            <input type="date" id="endDate" name="end_date" class="form-control" required>
+          </div>
+          <div class="form-group">
+            <label>種別</label>
+            <select name="is_default" class="form-control">
+              <option value="True">デフォルト期間（通常）</option>
+              <option value="False">臨時期間</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="submit" class="btn btn-primary">作成</button>
+          <button type="button" class="btn btn-secondary" data-dismiss="modal">キャンセル</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+
+<div class="card mb-4">
+  <div class="card-header"><strong>提出状況集計</strong></div>
+  <div class="card-body">
+    <form method="get" class="form-inline mb-2">
+        <select name="period_id" class="form-control mr-2">
+          {% for period in all_periods %}
+            <option value="{{ period.id }}" {% if period.id|stringformat:"s" == request.GET.period_id %}selected{% endif %}>
+              {% if period.is_default %}[通常]{% else %}[臨時]{% endif %}
+              {{ period.label }}
+            </option>
+          {% endfor %}
+        </select>
+    </form>
+    {% if selected_period %}
+      <table class="table table-bordered">
+        <thead>
+          <tr>
+            <th>スタッフ名</th>
+            <th>提出状態</th>
+            <th>コメント</th>
+            <th>提出日時</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for staff in staff_list %}
+          {% with submission=submissions|get_item:staff.id %}
+            <tr>
+              <td>{{ staff.name }}</td>
+              <td>
+                {% if submission %}
+                  <span class="badge badge-success">{{ submission.submission_status }}</span>
+                {% else %}
+                  <span class="badge badge-danger">未提出</span>
+                {% endif %}
+              </td>
+              <td>{% if submission %}{{ submission.comment }}{% endif %}</td>
+              <td>{% if submission %}{{ submission.updated_at|date:"Y-m-d H:i" }}{% endif %}</td>
+            </tr>
+          {% endwith %}
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
 </div>
 
 <script>
-  // ===== あなたの関数そのまま =====
-  function getNextHalfMonthRange() {
-    const today = new Date();
-    const y = today.getFullYear();
-    const m = today.getMonth();
-    const d = today.getDate();
 
-    let start, end;
-    if (d <= 15) {
-      // 1〜15日 → 今月16日〜月末
-      start = new Date(y, m, 16);
-      end   = new Date(y, m + 1, 0); // 月末日
+let originStart = null;
+$('#editPeriodModal').on('show.bs.modal', function (event) {
+  var button = $(event.relatedTarget);
+  var id = button.data('id');
+  var start = button.data('start');
+  var end = button.data('end');
+  var isDefault = button.data('is-default');
+  var pattern = button.data('pattern') || 'custom';
+
+  $('#editPeriodId').val(id);
+  $('#editStartDate').val(start);
+  $('#editEndDate').val(end);
+  $('#editIsDefault').val(isDefault ? "True" : "False");
+  $('#editPeriodPattern').val(pattern);   // ← ← ← ★ここをeditPeriodPatternに
+
+  $('#editPeriodForm').attr('action', '/shift-period-edit/' + id + '/');
+  originStart = start;
+
+  // 削除ボタン
+  $('#deletePeriodBtn').off('click').on('click', function(){
+    if(confirm('本当に削除しますか？')){
+      $('#editPeriodForm').attr('action', '/shift-period-delete/' + id + '/').submit();
+    }
+  });
+});
+
+// パターン変更時
+$('#editPeriodPattern').on('change', function(){
+  var pattern = $(this).val();   // ← ← ← ★これだけでOK
+  if (!originStart) return;
+  var s = new Date(originStart);
+  let e = null;
+
+  if (pattern === 'halfmonth') {
+    if (s.getDate() === 1) {
+      e = new Date(s.getFullYear(), s.getMonth(), 15);
     } else {
-      // 16日以降 → 来月1日〜15日
-      start = new Date(y, m + 1, 1);
-      end   = new Date(y, m + 1, 15);
+      e = new Date(s.getFullYear(), s.getMonth() + 1, 0);
+    }
+  } else if (pattern === 'month') {
+    e = new Date(s.getFullYear(), s.getMonth() + 1, 0);
+  } else if (pattern === 'week') {
+    e = new Date(s.getTime() + 6 * 24 * 60 * 60 * 1000);
+  } else {
+    // customなら編集可なので何もしない
+    return;
+  }
+  $('#editEndDate').val(formatDate(e));
+});
+
+// 日付フォーマットをYYYY-MM-DD形式に変換する関数
+function formatDate(dateObj) {
+  if (!dateObj) return '';
+  var year = dateObj.getFullYear();
+  var month = ('0' + (dateObj.getMonth() + 1)).slice(-2);
+  var day = ('0' + dateObj.getDate()).slice(-2);
+  return year + '-' + month + '-' + day;
+}
+
+// モーダル表示時に最新の提出期間から次の期間を自動設定
+$('#createPeriodModal').on('show.bs.modal', function () {
+  var latestStart = "{{ latest_period.start_date|date:'Y-m-d'|default_if_none:'' }}";
+  var latestEnd = "{{ latest_period.end_date|date:'Y-m-d'|default_if_none:'' }}";
+
+  $('#periodPattern').val('halfmonth');  // デフォルトは半月
+  var latestPattern = "{{ latest_pattern|default:'halfmonth' }}";
+  $('#periodPattern').val(latestPattern);
+
+  function setPeriodByPattern() {
+    var pattern = $('#periodPattern').val();
+    var s = /^\d{4}-\d{2}-\d{2}$/.test(latestStart) ? new Date(latestStart) : null;
+    var e = /^\d{4}-\d{2}-\d{2}$/.test(latestEnd) ? new Date(latestEnd) : null;
+
+    let nextStart, nextEnd;
+
+    if (s && e) {
+      // 基本：前回の終了日の翌日
+      nextStart = new Date(e.getTime() + 24 * 60 * 60 * 1000);
+
+      if (pattern === 'halfmonth') {
+        // 次の開始日が1日なら → 1日～15日
+        if (nextStart.getDate() === 1) {
+          nextEnd = new Date(nextStart.getFullYear(), nextStart.getMonth(), 15);
+        } else {
+          // 16日～月末
+          nextEnd = new Date(nextStart.getFullYear(), nextStart.getMonth() + 1, 0);
+        }
+      } else if (pattern === 'month') {
+        // 月ごと → 翌月1日～月末
+        nextStart = new Date(e.getFullYear(), e.getMonth() + 1, 1);
+        nextEnd = new Date(e.getFullYear(), e.getMonth() + 2, 0);
+      } else if (pattern === 'week') {
+        // 1週間ごと
+        nextEnd = new Date(nextStart.getTime() + 6 * 24 * 60 * 60 * 1000);
+      }
     }
 
-    function formatDateLocal(date) {
-      const yyyy = date.getFullYear();
-      const mm   = String(date.getMonth() + 1).padStart(2, '0');
-      const dd   = String(date.getDate()).padStart(2, '0');
-      return `${yyyy}-${mm}-${dd}`;
+    if (nextStart && nextEnd) {
+      $('#startDate').val(formatDate(nextStart));
+      $('#endDate').val(formatDate(nextEnd));
+      console.log('nextstart:', nextStart, '→', formatDate(nextStart));
+      console.log('nextend:', nextEnd, '→', formatDate(nextEnd));
+    } else {
+      $('#startDate').val('');
+      $('#endDate').val('');
     }
-
-    return {
-      start: formatDateLocal(start),
-      end:   formatDateLocal(end)
-    };
   }
 
-  // ===== ページ初期表示でデフォルト期間をセット =====
-  $(document).ready(function(){
-    const range = getNextHalfMonthRange();
-    $('#startDate').val(range.start);
-    $('#endDate').val(range.end);
-    loadSummary(range.start, range.end);
-  });
+  setPeriodByPattern();
+  $('#periodPattern').off('change').on('change', setPeriodByPattern);
+});
 
-  // ===== 集計・再読み込みボタン =====
-  $('#reloadBtn').on('click', function(){
-    const start = $('#startDate').val();
-    const end   = $('#endDate').val();
-    loadSummary(start, end);
-  });
 
   // ===== ダウンロードボタン =====
   $('#exportBtn').on('click', function(){
@@ -95,51 +319,6 @@
     const end   = $('#endDate').val();
     window.location.href = `/shift-management-export/?start=${start}&end=${end}`;
   });
-
-  // ===== 集計結果の取得＆描画（Ajaxでサンプル） =====
-  function loadSummary(start, end) {
-    $('#summary').html('<div class="text-center text-muted my-5">読み込み中...</div>');
-    // サンプルAPI呼び出し。実際はviews.pyで作って返す
-    $.getJSON('/shift-management-summary/', {start, end}, function(data){
-      let html = `
-        <table class="table table-bordered bg-white">
-          <thead>
-            <tr>
-              <th>日付</th>
-              <th>提出済み人数</th>
-              <th>未提出スタッフ</th>
-              <th>提出状況</th>
-            </tr>
-          </thead>
-          <tbody>
-      `;
-      data.summary.forEach(day => {
-        let statusClass = 'status-none', statusText = '未提出';
-        if (day.submitted === day.total) {
-          statusClass = 'status-complete'; statusText = '全員提出';
-        } else if (day.submitted > 0) {
-          statusClass = 'status-partial'; statusText = '一部提出';
-        }
-        html += `
-          <tr>
-            <td>${day.date}</td>
-            <td><span class="badge badge-pill badge-primary" style="font-size:1em;">${day.submitted} / ${day.total}</span></td>
-            <td>
-              ${day.unsubmitted.length > 0 
-                ? day.unsubmitted.map(name => `<span class="badge badge-danger mr-1">${name}</span>`).join('') 
-                : '<span class="badge badge-success">全員提出</span>'}
-            </td>
-            <td><span class="status-badge ${statusClass}">${statusText}</span></td>
-          </tr>
-        `;
-      });
-      html += `</tbody></table>`;
-      $('#summary').html(html);
-    })
-    .fail(function(){
-      $('#summary').html('<div class="text-danger my-5 text-center">集計データの取得に失敗しました。</div>');
-    });
-  }
 </script>
 
 <!-- fontawesome for home icon -->

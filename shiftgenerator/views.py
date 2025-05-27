@@ -20,9 +20,10 @@ import json
 import traceback
 from datetime import datetime, date, timedelta, time
 import csv
+from django.views.decorators.http import require_POST
 
 from .forms import CustomUserCreationForm, ShiftPreferenceForm
-from .models import ShiftPreference, Staff, DayOfWeek, ShiftHistory, Holiday, Skill, StaffSkill
+from .models import ShiftPreference, Staff, DayOfWeek, ShiftHistory, Holiday, Skill, StaffSkill, ShiftSubmissionPeriod, ShiftSubmission
 from django.contrib.auth.hashers import make_password
 from django.contrib import messages
 from django.db.models import Exists, OuterRef
@@ -190,41 +191,93 @@ def superuser_required(view_func):
     return decorated_view_func
 
 
+def is_month_last(date):
+    # その月の1日＋1か月−1日 ＝ 月末日
+    next_month = date.replace(day=28) + timedelta(days=4)  # 絶対に翌月になる
+    return date.day == (next_month - timedelta(days=next_month.day)).day
+
+def guess_period_pattern(period):
+    if not period:
+        return "halfmonth"  # デフォルト
+    s, e = period.start_date, period.end_date
+    # 半月ごと
+    if s.day == 1 and e.day == 15:
+        return "halfmonth"
+    if s.day == 16 and is_month_last(e):
+        return "halfmonth"
+    # 1か月ごと（1日〜月末）
+    if s.day == 1 and is_month_last(e):
+        return "month"
+    # 1週間ごと
+    if (e - s).days == 6:
+        return "week"
+    # それ以外はカスタム
+    return "custom"
+
+
 @user_passes_test(lambda u: u.is_superuser)
 def shift_management_view(request):
-    return render(request, 'shiftgenerator/shift_management_view.html')
+    all_periods = ShiftSubmissionPeriod.objects.all().order_by('-start_date')
+    active_periods = all_periods.filter(is_active=True)
+    staff_list = Staff.objects.filter(is_active=True)
 
-@superuser_required
-def shift_management_summary(request):
-    # 期間指定を受け取る
-    start = request.GET.get('start')
-    end = request.GET.get('end')
-    if not (start and end):
-        return JsonResponse({'error': '期間が指定されていません'}, status=400)
+    # 集計対象期間の選択
+    period_id = request.GET.get("period_id")
+    selected_period = None
+    submissions = {}
+    if period_id:
+        selected_period = ShiftSubmissionPeriod.objects.get(id=period_id)
+        for s in staff_list:
+            submission = ShiftSubmission.objects.filter(
+                staff=s, period=selected_period
+            ).order_by('-updated_at').first()
+            if submission:
+                submissions[s.id] = submission
 
-    # 有効スタッフだけに変更！
-    staff = Staff.objects.filter(is_active=True)
-    staff_names = list(staff.values_list('name', flat=True))
-    start_date = datetime.strptime(start, "%Y-%m-%d").date()
-    end_date = datetime.strptime(end, "%Y-%m-%d").date()
-    days = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
+    # 新規作成処理
+    if request.method == "POST":
+        start_date = request.POST.get("start_date")
+        end_date = request.POST.get("end_date")
+        is_default = request.POST.get("is_default") == "True"  # True/False文字列→bool
+        if start_date and end_date:
+            ShiftSubmissionPeriod.objects.create(
+                start_date=start_date,
+                end_date=end_date,
+                is_active=True,
+                is_default=is_default
+            )
+        return redirect("shiftgenerator:shift-management-view")
 
-    summary = []
-    for day in days:
-        submitted = []
-        unsubmitted = []
-        for s in staff:
-            if ShiftPreference.objects.filter(staff=s, date=day).exists():
-                submitted.append(s.name)
-            else:
-                unsubmitted.append(s.name)
-        summary.append({
-            "date": day.strftime("%Y-%m-%d"),
-            "submitted": len(submitted),
-            "total": staff.count(),           # ここも有効スタッフ数のみ
-            "unsubmitted": unsubmitted,       # ここも有効スタッフのみ
-        })
-    return JsonResponse({"summary": summary})
+    # 直近の期間をテンプレートへ    
+    latest_period = ShiftSubmissionPeriod.objects.filter(is_default=True).order_by('-end_date').first()
+    latest_pattern = guess_period_pattern(latest_period)
+    print(f"Latest period: {latest_period}")
+    print(f"Latest pattern: {latest_pattern}")
+    return render(request, "shiftgenerator/shift_management_view.html", {
+        "all_periods": all_periods,
+        "active_periods": active_periods,
+        "staff_list": staff_list,
+        "selected_period": selected_period,
+        "submissions": submissions,
+        "latest_period": latest_period, # 直近の期間
+        "latest_pattern": latest_pattern, # 直近の期間のパターン
+    })
+
+@require_POST
+@user_passes_test(lambda u: u.is_superuser)
+def shift_period_edit(request, id):
+    period = get_object_or_404(ShiftSubmissionPeriod, id=id)
+    period.start_date = request.POST['start_date']
+    period.end_date = request.POST['end_date']
+    period.is_default = request.POST.get('is_default') == "True"
+    period.save()
+    return redirect('shiftgenerator:shift-management-view')
+
+@require_POST
+def shift_period_delete(request, period_id):
+    period = get_object_or_404(ShiftSubmissionPeriod, id=period_id)
+    period.delete()
+    return redirect('shiftgenerator:shift-management-view')
 
 @superuser_required
 def shift_calendar_view(request):
