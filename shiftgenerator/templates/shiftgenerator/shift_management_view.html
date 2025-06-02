@@ -117,6 +117,7 @@
                     data-toggle="modal"
                     data-target="#editPeriodModal"
                     data-id="{{ period.id }}"
+                    data-type="{{ period.type }}"
                     data-is_active="{{ period.is_active|yesno:'1,0' }}"
                     data-start="{{ period.start_date|date:'Y-m-d' }}"
                     data-end="{{ period.end_date|date:'Y-m-d' }}"
@@ -374,8 +375,14 @@ $('#editPeriodModal').on('show.bs.modal', function (event) {
   /* ---------- フィールド活性/必須 ---------- */
   const dateFld  = $modal.find('#editStartDate, #editEndDate');
   const timeFld  = $modal.find('#editStartTimeInput, #editEndTimeInput');
-  const typeFld  = $modal.find('#editPeriodType');
   const pattFld  = $modal.find('#editPeriodPattern');
+
+  const typeFld  = $modal.find('#editPeriodType');
+
+  /* ① 必ず enabled → ② val() → ③ 必要なら再度 disabled */
+  typeFld.prop('disabled', false);              // ①
+  typeFld.val(button.data('type'));             // ②
+  typeFld.prop('disabled', !isActive);          // ③
 
   if (isActive) {                  // 受付中：全部編集可
     dateFld.prop({ readonly:false, required:true });
@@ -622,6 +629,13 @@ function updatePeriodModalUI(modal, mode) {
     $modal.find('.period-pattern-group, .period-end-group').show();
     $modal.find('.time-row').hide();
     $modal.find('#' + prefix + 'StartDate').off('change');
+  }
+
+    // ★ ここで強制的に値をセット＆disabled切り替え
+  var typeFld = $modal.find('#' + prefix + 'PeriodType');
+  typeFld.val(typeVal);
+  if (mode === 'edit' && !typeFld.is(':disabled')) {
+    typeFld.prop('disabled', false);
   }
 }
 
