@@ -43,6 +43,10 @@ class ShiftPreferenceAdmin(admin.ModelAdmin):
     list_filter = ('holiday', 'staff')  # フィルターを追加
     search_fields = ('staff__name', 'description')  # スタッフ名と説明で検索可能
 
+class ShiftSubmissionPeriodAdmin(admin.ModelAdmin):
+    list_display = ('label', 'type', 'start_date', 'start_time', 'end_date', 'end_time', 'is_active')
+    list_filter = ('type', 'is_active')
+    search_fields = ('label',)
 
 admin.site.register(CustomUser, CustomUserAdmin)
 admin.site.register(Staff)

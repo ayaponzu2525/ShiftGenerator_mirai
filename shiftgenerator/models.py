@@ -174,11 +174,19 @@ class ShiftHistory(models.Model):
 
 # シフト提出期間設定用
 class ShiftSubmissionPeriod(models.Model):
+    TYPE_CHOICES = [
+        ('default', 'デフォルト'),
+        ('temporary', '臨時'),
+        ('HELP', 'ヘルプ'),
+    ]
     label = models.CharField(max_length=64, blank=True)  # blank=Trueで空欄許可
     start_date = models.DateField()
     end_date = models.DateField()
+    start_time = models.TimeField(null=True, blank=True)  # 開始時刻
+    end_time = models.TimeField(null=True, blank=True)    # 終了時刻
+    type = models.CharField(max_length=16, choices=TYPE_CHOICES, default='default')
+    auto_close_date = models.DateTimeField(null=True, blank=True)  # 締切日時。日付だけならDateFieldでもOK
     is_active = models.BooleanField(default=True)
-    is_default = models.BooleanField(default=False)  # True:通常, False:臨時
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

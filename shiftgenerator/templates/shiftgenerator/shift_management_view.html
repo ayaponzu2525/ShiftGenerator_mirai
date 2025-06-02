@@ -24,44 +24,130 @@
 <body class="bg-light">
   {% load shift_tags %}
 
-  <!-- 提出期間管理エリア -->
+<!-- ▽ 提出期間管理エリア ▽ -->
 <div class="card mb-4">
   <div class="card-header d-flex justify-content-between align-items-center">
-    <div>
-      <strong>提出期間管理</strong>
-    </div>
-    <button class="btn btn-primary btn-sm" data-toggle="modal" data-target="#createPeriodModal">新規期間作成</button>
+    <strong>提出期間管理</strong>
+
+    <!-- 新規作成 -->
+    <button class="btn btn-primary btn-sm"
+            data-toggle="modal"
+            data-target="#createPeriodModal">
+      新規期間作成
+    </button>
   </div>
+
+  <!-- ───── 過去募集期間指定での表示 ───── -->
+  <div class="px-3 pt-2">
+  <form method="get" class="form-inline mb-2">
+    <input type="hidden" name="show_past" value="1">
+
+    <label class="mr-2">終了日:</label>
+    <input type="date" name="past_from" class="form-control mr-1" value="{{ past_from|default_if_none:'' }}">
+    <span class="mr-1">～</span>
+    <input type="date" name="past_to" class="form-control mr-1" value="{{ past_to|default_if_none:'' }}">
+
+    <button type="submit" class="btn btn-outline-secondary btn-sm">表示</button>
+
+    {% if show_past %}
+      <a href="?" class="btn btn-link btn-sm">隠す</a>
+    {% endif %}
+  </form>
+</div>
+
+
+
   <div class="card-body py-2">
-    <div class="mb-2"><b>受付中の期間：</b>
-      {% for period in active_periods %}
-        {% with s=period.start_date e=period.end_date %}
-          {% with days=s|days_diff:e %}
-            <button
-              class="btn btn-info btn-sm mb-1 mr-1"
-              data-toggle="modal"
-              data-target="#editPeriodModal"
-              data-id="{{ period.id }}"
-              data-start="{{ s|date:'Y-m-d' }}"
-              data-end="{{ e|date:'Y-m-d' }}"
-              data-is-default="{{ period.is_default }}"
-              data-pattern="{% if days == 6 %}week{% elif days >= 12 and days <= 16 %}halfmonth{% elif days >= 27 and days <= 31 %}month{% else %}custom{% endif %}"
-            >
-              {{ s|date:"Y年m月d日" }}～{{ e|date:"m月d日" }}
-            </button>
-          {% endwith %}
+    <!-- ========== 受付中 ========== -->
+    <h6 class="mt-2">受付中</h6>
+
+    {% for period in active_periods %}
+      {% with s=period.start_date e=period.end_date %}
+        {% with days=s|days_diff:e %}
+          <button
+            class="btn btn-sm mb-1 mr-1
+              {% if period.type == 'HELP' %}btn-warning
+              {% elif period.type == 'default' %}btn-primary
+              {% else %}btn-info{% endif %}"
+            data-toggle="modal"
+            data-target="#editPeriodModal"
+            data-id="{{ period.id }}"
+            data-type="{{ period.type }}"
+            data-start="{{ period.start_date|date:'Y-m-d' }}"
+            data-end="{{ period.end_date|date:'Y-m-d' }}"
+            data-start-time="{{ period.start_time|default_if_none:'' }}"
+            data-end-time="{{ period.end_time|default_if_none:'' }}"
+            data-pattern="{% if days == 6 %}week
+                          {% elif days >= 12 and days <= 16 %}halfmonth
+                          {% elif days >= 27 and days <= 31 %}month
+                          {% else %}custom{% endif %}"
+            data-auto-close="{{ period.auto_close_date|default_if_none:''|date:'Y-m-d\\TH:i' }}"
+          >
+            {% if period.type == 'HELP' %}
+              [{{ period.get_type_display }}]
+              {{ period.start_date|date:"Y年m月d日" }}：
+              {{ period.start_time|time:"H:i" }}～{{ period.end_time|time:"H:i" }}
+            {% else %}
+              [{{ period.get_type_display }}]
+              {{ period.start_date|date:"Y年m月d日" }}～
+              {{ period.end_date|date:"m月d日" }}
+            {% endif %}
+
+            {% if period.auto_close_date %}
+              <span class="badge badge-secondary ml-2">
+                締切：{{ period.auto_close_date|date:"Y/m/d H:i" }}
+              </span>
+            {% endif %}
+          </button>
         {% endwith %}
-      {% empty %}
-        <span class="text-muted">現在受付中の期間はありません</span>
-      {% endfor %}
-    </div>
+      {% endwith %}
+    {% empty %}
+      <span class="text-muted">現在受付中の期間はありません</span>
+    {% endfor %}
+
+    <!-- ========== 終了済み ========== -->
+    {% if show_past %}
+      <h6 class="mt-3">終了済み</h6>
+
+      {% if not past_from and not past_to %}
+        <div class="text-muted">※ 期間を指定してください。</div>
+      {% else %}
+        {% for period in inactive_periods %}
+          <button   class="btn btn-outline-secondary btn-sm mb-1 mr-1"
+                    data-toggle="modal"
+                    data-target="#editPeriodModal"
+                    data-id="{{ period.id }}"
+                    data-is_active="{{ period.is_active|yesno:'1,0' }}"
+                    data-start="{{ period.start_date|date:'Y-m-d' }}"
+                    data-end="{{ period.end_date|date:'Y-m-d' }}"
+                    data-start-time="{{ period.start_time|default_if_none:'' }}"
+                    data-end-time="{{ period.end_time|default_if_none:'' }}"
+                    data-auto-close="{{ period.auto_close_date|default_if_none:''|date:'Y-m-d\\TH:i' }}">
+            {% if period.type == 'HELP' %}
+              [{{ period.get_type_display }}]
+              {{ period.start_date|date:"Y年m月d日" }}：
+              {{ period.start_time|time:"H:i" }}～{{ period.end_time|time:"H:i" }}
+            {% else %}
+              [{{ period.get_type_display }}]
+              {{ period.start_date|date:"Y年m月d日" }}～
+              {{ period.end_date|date:"m月d日" }}
+            {% endif %}
+          </button>
+          {% empty %}
+            <span class="text-muted">該当期間はありません</span>
+        {% endfor %}
+      {% endif %}
+    {% endif %}
   </div>
+</div>
+
 
   <!-- 期間編集モーダル -->
   <div class="modal fade" id="editPeriodModal" tabindex="-1" role="dialog" aria-labelledby="editPeriodModalLabel" aria-hidden="true">
   <div class="modal-dialog" role="document">
     <form method="post" id="editPeriodForm" action="">
       {% csrf_token %}
+      <input type="hidden" name="period_id" id="editPeriodId">
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" id="editPeriodModalLabel">期間を編集</h5>
@@ -69,7 +155,16 @@
         </div>
         <div class="modal-body">
           <div class="form-group">
-            <label>周期パターン</label>
+            <label>種別</label>
+            <select name="type" id="editPeriodType" class="form-control" required>
+              <option value="default">デフォルト期間（通常）</option>
+              <option value="temporary">臨時期間</option>
+              <option value="HELP">HELP（ピンポイント）</option>
+            </select>
+          </div>
+
+          <div class="form-group period-pattern-group">
+            <label>周期パターン（入力補助です）</label>
             <select id="editPeriodPattern" class="form-control">
               <option value="halfmonth">半月ごと</option>
               <option value="month">1か月ごと</option>
@@ -77,28 +172,49 @@
               <option value="custom">カスタム（日付は手入力）</option>
             </select>
           </div>
-          <input type="hidden" name="period_id" id="editPeriodId">
+
           <div class="form-group">
             <label>開始日</label>
             <input type="date" name="start_date" id="editStartDate" class="form-control" required>
           </div>
-          <div class="form-group">
+          <div class="form-group period-end-group">
             <label>終了日</label>
             <input type="date" name="end_date" id="editEndDate" class="form-control" required>
           </div>
-          <div class="form-group">
-            <label>種別</label>
-            <select name="is_default" id="editIsDefault" class="form-control">
-              <option value="True">デフォルト期間（通常）</option>
-              <option value="False">臨時期間</option>
-            </select>
+
+          <!-- ↓HELP専用 時刻入力 -->
+          <div class="form-row time-row" style="display:none;">
+            <div class="form-group col">
+              <label>開始時刻</label>
+              <input type="time" name="start_time" id="editStartTimeInput" class="form-control">
+            </div>
+            <div class="form-group col">
+              <label>終了時刻</label>
+              <input type="time" name="end_time" id="editEndTimeInput" class="form-control">
+            </div>
           </div>
-        </div>
-        <div class="modal-footer">
-          <button type="submit" class="btn btn-primary">保存</button>
-          <button type="button" class="btn btn-danger" id="deletePeriodBtn">削除</button>
-          <button type="button" class="btn btn-secondary" data-dismiss="modal">キャンセル</button>
-        </div>
+
+
+          <div class="form-group auto-close-group">
+            <label>自動締切日時（空欄＝自動締切なし）</label>
+            <div class="input-group">
+              <input type="datetime-local" name="auto_close_date" id="editAutoCloseDate" class="form-control">
+              <div class="input-group-append">
+                <button type="button" class="btn btn-outline-secondary clearAutoCloseBtn">クリア</button>
+
+              </div>
+            </div>
+          </div>
+
+
+          </div>
+            <div class="modal-footer">
+              <button type="submit" class="btn btn-primary" id="editSaveBtn">保存</button>
+              <button type="button" class="btn btn-warning" id="stopPeriodBtn">停止</button>
+              <button type="button" class="btn btn-success" id="reopenPeriodBtn">再開</button>
+              <button type="button" class="btn btn-danger" id="deletePeriodBtn">削除</button>
+              <button type="button" class="btn btn-secondary" data-dismiss="modal">キャンセル</button>
+            </div>
       </div>
     </form>
   </div>
@@ -106,7 +222,6 @@
 
 
 <!-- 新規期間作成モーダル -->
- <!-- デバッグ用： -->
 <div class="modal fade" id="createPeriodModal" tabindex="-1" role="dialog" aria-labelledby="createPeriodModalLabel" aria-hidden="true">
   <div class="modal-dialog" role="document">
     <form method="post" action="{% url 'shiftgenerator:shift-management-view' %}">
@@ -117,30 +232,60 @@
           <button type="button" class="close" data-dismiss="modal" aria-label="閉じる"><span aria-hidden="true">&times;</span></button>
         </div>
         <div class="modal-body">
-          <div class="form-group">
             <div class="form-group">
-              <label>周期パターン</label>
-              <select id="periodPattern" class="form-control">
-                <option value="halfmonth" {% if latest_pattern == "halfmonth" %}selected{% endif %}>半月ごと</option>
-                <option value="month" {% if latest_pattern == "month" %}selected{% endif %}>1か月ごと</option>
-                <option value="week" {% if latest_pattern == "week" %}selected{% endif %}>1週間ごと</option>
-                <option value="custom" {% if latest_pattern == "custom" %}selected{% endif %}>カスタム（日付は手入力）</option>
+              <label>種別</label>
+              <select name="type" id="PeriodType" class="form-control" required>
+                <option value="default">デフォルト期間（通常）</option>
+                <option value="temporary">臨時期間</option>
+                <option value="HELP">HELP（ピンポイント）</option>
               </select>
             </div>
-            <label>開始日</label>
-            <input type="date" id="startDate" name="start_date" class="form-control" required>
-          </div>
-          <div class="form-group">
-            <label>終了日</label>
-            <input type="date" id="endDate" name="end_date" class="form-control" required>
-          </div>
-          <div class="form-group">
-            <label>種別</label>
-            <select name="is_default" class="form-control">
-              <option value="True">デフォルト期間（通常）</option>
-              <option value="False">臨時期間</option>
-            </select>
-          </div>
+
+            <div class="form-group period-pattern-group">
+              <label>周期パターン（入力補助です）</label>
+              <select id="PeriodPattern" class="form-control">
+                <option value="halfmonth">半月ごと</option>
+                <option value="month">1か月ごと</option>
+                <option value="week">1週間ごと</option>
+                <option value="custom">カスタム（日付は手入力）</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>開始日</label>
+              <input type="date" name="start_date" id="StartDate" class="form-control" required>
+            </div>
+            <div class="form-group period-end-group">
+              <label>終了日</label>
+              <input type="date" name="end_date" id="EndDate" class="form-control" required>
+            </div>
+
+            <!-- ↓HELP専用 時刻入力 -->
+            <div class="form-row time-row" style="display:none;">
+              <div class="form-group col">
+                <label>開始時刻</label>
+                <input type="time" name="start_time" id="StartTimeInput" class="form-control">
+              </div>
+              <div class="form-group col">
+                <label>終了時刻</label>
+                <input type="time" name="end_time" id="EndTimeInput" class="form-control">
+              </div>
+            </div>
+
+            <div class="form-group auto-close-group">
+              <label>自動締切日時（空欄 = 自動締切なし）</label>
+              <div class="input-group">
+                <input type="datetime-local" name="auto_close_date" id="autoCloseDate" class="form-control">
+                <div class="input-group-append">
+                  <button type="button" class="btn btn-outline-secondary clearAutoCloseBtn">クリア</button>
+
+                </div>
+              </div>
+            </div>
+
+
+            
+
         </div>
         <div class="modal-footer">
           <button type="submit" class="btn btn-primary">作成</button>
@@ -159,8 +304,7 @@
         <select name="period_id" class="form-control mr-2">
           {% for period in all_periods %}
             <option value="{{ period.id }}" {% if period.id|stringformat:"s" == request.GET.period_id %}selected{% endif %}>
-              {% if period.is_default %}[通常]{% else %}[臨時]{% endif %}
-              {{ period.label }}
+              {% if period.type == "default" %}[通常]{% elif period.type == "temporary" %}[臨時]{% elif period.type == "HELP" %}[HELP]{% endif %} {{ period.label }}
             </option>
           {% endfor %}
         </select>
@@ -202,29 +346,129 @@
 
 let originStart = null;
 $('#editPeriodModal').on('show.bs.modal', function (event) {
-  var button = $(event.relatedTarget);
-  var id = button.data('id');
-  var start = button.data('start');
-  var end = button.data('end');
-  var isDefault = button.data('is-default');
-  var pattern = button.data('pattern') || 'custom';
+  const $modal  = $(this);
+  const button  = $(event.relatedTarget);
+  const rawActive = button.data('is_active');           // undefined, 0, 1
+  const isActive  = (rawActive === undefined) || String(rawActive) === '1';
+  const autoCloseVal = button.data('autoClose'); // ← camelCase で読む
 
-  $('#editPeriodId').val(id);
-  $('#editStartDate').val(start);
-  $('#editEndDate').val(end);
-  $('#editIsDefault').val(isDefault ? "True" : "False");
-  $('#editPeriodPattern').val(pattern);   // ← ← ← ★ここをeditPeriodPatternに
+  /* ---------- 値セット ---------- */
+  $modal.find('#editPeriodId').val(button.data('id'));
+  $modal.find('#editPeriodType').val(button.data('type'));
+  $modal.find('#editStartDate').val(button.data('start'));
+  $modal.find('#editEndDate').val(button.data('end'));
+  $modal.find('#editStartTimeInput').val(button.data('start-time') || '');
+  $modal.find('#editEndTimeInput').val(button.data('end-time')   || '');
+  $modal.find('#editPeriodPattern').val(button.data('pattern') || 'custom');
+  $modal.find('#editAutoCloseDate').val(autoCloseVal || '');
 
-  $('#editPeriodForm').attr('action', '/shift-period-edit/' + id + '/');
-  originStart = start;
+  /* ---------- ボタン出し分け ---------- */
+  if (isActive) {
+    $('#editSaveBtn, #stopPeriodBtn').show();
+    $('#reopenPeriodBtn').hide();
+  } else {
+    $('#editSaveBtn, #stopPeriodBtn').hide();
+    $('#reopenPeriodBtn').show();
+  }
 
-  // 削除ボタン
-  $('#deletePeriodBtn').off('click').on('click', function(){
-    if(confirm('本当に削除しますか？')){
-      $('#editPeriodForm').attr('action', '/shift-period-delete/' + id + '/').submit();
+  /* ---------- フィールド活性/必須 ---------- */
+  const dateFld  = $modal.find('#editStartDate, #editEndDate');
+  const timeFld  = $modal.find('#editStartTimeInput, #editEndTimeInput');
+  const typeFld  = $modal.find('#editPeriodType');
+  const pattFld  = $modal.find('#editPeriodPattern');
+
+  if (isActive) {                  // 受付中：全部編集可
+    dateFld.prop({ readonly:false, required:true });
+    timeFld.prop('readonly', false);
+    typeFld.prop('disabled', false);
+    pattFld.prop('disabled', false);
+  } else {                         // 停止中：締切だけ
+    dateFld.prop({ readonly:true,  required:false });
+    timeFld.prop('readonly', true);
+    typeFld.prop('disabled', true);
+    pattFld.prop('disabled', true);
+  }
+
+  /* ---------- action をデフォルト(編集)に ---------- */
+  $modal.find('#editPeriodForm')
+        .attr('action', '/shift-period-edit/' + button.data('id') + '/');
+
+  /* ---------- 停止 / 再開 / 削除ボタン ---------- */
+  $('#stopPeriodBtn').off('click').on('click', function () {
+    if (confirm('この募集期間を停止しますか？')) {
+      $('#editPeriodForm').attr('action', '/shift-period-stop/' + button.data('id') + '/').submit();
     }
   });
+
+  $('#reopenPeriodBtn').off('click').on('click', function () {
+    if (confirm('この募集期間を再開しますか？')) {
+      $('#editPeriodForm').attr('action', '/shift-period-reopen/' + button.data('id') + '/').submit();
+    }
+  });
+
+  $('#deletePeriodBtn').off('click').on('click', function () {
+    if (confirm('本当に削除しますか？')) {
+      $('#editPeriodForm').attr('action', '/shift-period-delete/' + button.data('id') + '/').submit();
+    }
+  });
+  
+/* ---------- UI & 自動締切セット ---------- */
+updatePeriodModalUI(this, 'edit');        // ❶ 最初の描画
+
+// ---------- 自動締切日時をセット ---------- */
+$modal.find('#editPeriodPattern, #editStartDate')
+      .off('change.calcEnd')
+      .on ('change.calcEnd', function(){
+         const end = calcEndByPattern(
+             $modal.find('#editStartDate').val(),
+             $modal.find('#editPeriodPattern').val()
+         );
+         if(end) $modal.find('#editEndDate').val(end);
+      });
+
+
+/* ---------- change イベントを再登録 ---------- */
+$modal.find('#editPeriodType')            // 種別変更で UI 切替
+      .off('change.uimode')
+      .on('change.uimode', () => updatePeriodModalUI($modal[0], 'edit'));
+
+/* ---------- 最後にもう一度 UI を確定 ---------- */
+updatePeriodModalUI(this, 'edit');        // ❷ これで常に正しい表示
+
+
 });
+
+// -------------------- 期間終了日を計算 --------------------
+function calcEndByPattern(startStr, pattern){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(startStr)) return '';
+  const s = new Date(startStr);
+  let e   = null;
+
+  switch(pattern){
+    case 'week':
+      e = new Date(s.getTime() + 6*24*60*60*1000);
+      break;
+
+    case 'halfmonth':
+      if (s.getDate() <= 15){
+        e = new Date(s.getFullYear(), s.getMonth(), 15);
+      }else{
+        e = new Date(s.getFullYear(), s.getMonth()+1, 0);
+      }
+      break;
+
+    case 'month':
+      e = new Date(s.getFullYear(), s.getMonth()+1, 0);  // 月末
+      break;
+
+    default:
+      return '';
+  }
+  return e ? formatDate(e) : '';
+}
+
+
+
 
 // パターン変更時
 $('#editPeriodPattern').on('change', function(){
@@ -259,58 +503,130 @@ function formatDate(dateObj) {
   return year + '-' + month + '-' + day;
 }
 
+// 自動締切日時を計算してセットする共通関数
+function updateAutoClose($modal, prefix=''){
+  const typeVal       = $modal.find('#'+prefix+'PeriodType').val();
+  const startDateStr  = $modal.find('#'+prefix+'StartDate').val();
+  const $autoCloseInp = $modal.find('#'+prefix+'AutoCloseDate');
+
+  if ((typeVal==='default'||typeVal==='temporary') && startDateStr){
+    const d  = new Date(startDateStr);
+    d.setDate(d.getDate() - 5);          // 開始日の5日前
+    const y  = d.getFullYear();
+    const m  = String(d.getMonth()+1).padStart(2,'0');
+    const dd = String(d.getDate()).padStart(2,'0');
+    const val = `${y}-${m}-${dd}T18:00`;
+    $autoCloseInp.val(val);
+    if (val) console.log('autoClose:', val);
+  } else {
+    $autoCloseInp.val('');
+    // 空欄はデバッグ時だけconsole.log、通常はスキップでもOK
+    // console.log('autoClose: (blank)');
+  }
+}
+
+
+
 // モーダル表示時に最新の提出期間から次の期間を自動設定
 $('#createPeriodModal').on('show.bs.modal', function () {
   var latestStart = "{{ latest_period.start_date|date:'Y-m-d'|default_if_none:'' }}";
   var latestEnd = "{{ latest_period.end_date|date:'Y-m-d'|default_if_none:'' }}";
 
-  $('#periodPattern').val('halfmonth');  // デフォルトは半月
+  $('#PeriodPattern').val('halfmonth');  // デフォルトは半月
   var latestPattern = "{{ latest_pattern|default:'halfmonth' }}";
-  $('#periodPattern').val(latestPattern);
+  $('#PeriodPattern').val(latestPattern);
 
+  // 初期値の自動締め切り日をセット
   function setPeriodByPattern() {
-    var pattern = $('#periodPattern').val();
-    var s = /^\d{4}-\d{2}-\d{2}$/.test(latestStart) ? new Date(latestStart) : null;
-    var e = /^\d{4}-\d{2}-\d{2}$/.test(latestEnd) ? new Date(latestEnd) : null;
+    const pattern = $('#PeriodPattern').val();
+    const s = /^\d{4}-\d{2}-\d{2}$/.test(latestStart) ? new Date(latestStart) : null;
+    const e = /^\d{4}-\d{2}-\d{2}$/.test(latestEnd)   ? new Date(latestEnd)   : null;
 
     let nextStart, nextEnd;
 
     if (s && e) {
-      // 基本：前回の終了日の翌日
-      nextStart = new Date(e.getTime() + 24 * 60 * 60 * 1000);
+      nextStart = new Date(e.getTime() + 24*60*60*1000);   // 前回終了日の翌日
 
       if (pattern === 'halfmonth') {
-        // 次の開始日が1日なら → 1日～15日
-        if (nextStart.getDate() === 1) {
-          nextEnd = new Date(nextStart.getFullYear(), nextStart.getMonth(), 15);
-        } else {
-          // 16日～月末
-          nextEnd = new Date(nextStart.getFullYear(), nextStart.getMonth() + 1, 0);
-        }
+        nextEnd = (nextStart.getDate() === 1)
+          ? new Date(nextStart.getFullYear(), nextStart.getMonth(), 15)
+          : new Date(nextStart.getFullYear(), nextStart.getMonth()+1, 0);
       } else if (pattern === 'month') {
-        // 月ごと → 翌月1日～月末
-        nextStart = new Date(e.getFullYear(), e.getMonth() + 1, 1);
-        nextEnd = new Date(e.getFullYear(), e.getMonth() + 2, 0);
+        nextStart = new Date(e.getFullYear(), e.getMonth()+1, 1);
+        nextEnd   = new Date(e.getFullYear(), e.getMonth()+2, 0);
       } else if (pattern === 'week') {
-        // 1週間ごと
-        nextEnd = new Date(nextStart.getTime() + 6 * 24 * 60 * 60 * 1000);
+        nextEnd = new Date(nextStart.getTime() + 6*24*60*60*1000);
       }
     }
 
     if (nextStart && nextEnd) {
-      $('#startDate').val(formatDate(nextStart));
-      $('#endDate').val(formatDate(nextEnd));
-      console.log('nextstart:', nextStart, '→', formatDate(nextStart));
-      console.log('nextend:', nextEnd, '→', formatDate(nextEnd));
+      $('#StartDate').val(formatDate(nextStart));
+      $('#EndDate').val(formatDate(nextEnd));
+
+      /* ---------- 自動締切日をここで直接計算 ---------- */
+      const typeVal = $('#PeriodType').val();      // default / temporary / HELP
+      if (typeVal === 'default' || typeVal === 'temporary') {
+        const d = new Date(nextStart);
+        d.setDate(d.getDate() - 5);                // 開始日の5日前
+        const y  = d.getFullYear();
+        const m  = String(d.getMonth()+1).padStart(2,'0');
+        const dd = String(d.getDate()).padStart(2,'0');
+        const val = `${y}-${m}-${dd}T18:00`;
+        $('#autoCloseDate').val(val);
+        console.log('autoClose:', val);
+      } else {
+        $('#autoCloseDate').val('');               // HELP などは空欄
+      }
+
+      console.log('nextstart:', formatDate(nextStart));
+      console.log('nextend  :', formatDate(nextEnd));
     } else {
-      $('#startDate').val('');
-      $('#endDate').val('');
+      $('#StartDate, #EndDate, #autoCloseDate').val('');
     }
   }
 
+
   setPeriodByPattern();
-  $('#periodPattern').off('change').on('change', setPeriodByPattern);
+  $('#PeriodPattern').off('change').on('change', setPeriodByPattern);
+
+  // 初期表示時にモーダルのUIを更新
+  var $modal = $(this);
+  
+
+
+  // 最初＆変更時に実行
+  updateAutoClose($(this), '');
+  $modal.find('#PeriodType').off('change.uimode').on ('change.uimode', () => updatePeriodModalUI(this, ''));
+
 });
+
+
+
+
+function updatePeriodModalUI(modal, mode) {
+  var $modal = $(modal);
+  // id前置詞で分岐
+  var prefix = (mode === 'edit') ? 'edit' : '';
+  var typeVal = $modal.find('#' + prefix + 'PeriodType').val();
+
+  if (typeVal === "HELP") {
+    $modal.find('.period-pattern-group, .period-end-group').hide();
+    $modal.find('.time-row').show();
+
+    // 開始日が変わったら終了日も自動セット
+    $modal.find('#' + prefix + 'StartDate').off('change').on('change', function(){
+      $modal.find('#' + prefix + 'EndDate').val($(this).val());
+    }).trigger('change');
+    $modal.find('#' + prefix + 'EndDate').val($modal.find('#' + prefix + 'StartDate').val());
+  } else {
+    $modal.find('.period-pattern-group, .period-end-group').show();
+    $modal.find('.time-row').hide();
+    $modal.find('#' + prefix + 'StartDate').off('change');
+  }
+}
+
+
+
 
 
   // ===== ダウンロードボタン =====

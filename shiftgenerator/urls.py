@@ -25,6 +25,9 @@ urlpatterns = [
     path('shift-management-view/', views.shift_management_view, name='shift-management-view'),
     path('shift-period-edit/<int:id>/', views.shift_period_edit, name='shift-period-edit'),
     path('shift-period-delete/<int:period_id>/', views.shift_period_delete, name='shift-period-delete'),
+    path('shift-period-stop/<int:period_id>/', views.shift_period_stop,name='shift-period-stop'),
+    path('shift-period-reopen/<int:period_id>/', views.shift_period_reopen, name='shift-period-reopen'),
+
     path('shift-management/', views.shift_management, name='shift-management'),
     path('shift-calendar-view/', views.shift_calendar_view, name='shift-calendar-view'),
     path('copy-shifts/', views.copy_shifts, name='copy-shifts'),

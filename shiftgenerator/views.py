@@ -26,7 +26,8 @@ from .forms import CustomUserCreationForm, ShiftPreferenceForm
 from .models import ShiftPreference, Staff, DayOfWeek, ShiftHistory, Holiday, Skill, StaffSkill, ShiftSubmissionPeriod, ShiftSubmission
 from django.contrib.auth.hashers import make_password
 from django.contrib import messages
-from django.db.models import Exists, OuterRef
+from django.db.models import Exists, OuterRef, Q
+from shiftgenerator.utils.utils import close_expired_periods
 
 
 
@@ -215,68 +216,197 @@ def guess_period_pattern(period):
     return "custom"
 
 
+def is_overlap(start1, end1, start2, end2):
+    return not (end1 < start2 or end2 < start1)
+
+def has_duplicate_period(type_, start_date, end_date, start_time=None, end_time=None, exclude_id=None):
+    # default/temporaryは相互に重複禁止
+    if type_ in ['default', 'temporary']:
+        # どちらかのtypeがdefaultかtemporaryなら、両方合わせて調べる
+        qs = ShiftSubmissionPeriod.objects.filter(
+            type__in=['default', 'temporary'],
+            is_active=True
+        )
+        if exclude_id:
+            qs = qs.exclude(id=exclude_id)
+        for period in qs:
+            if is_overlap(start_date, end_date, period.start_date, period.end_date):
+                return True
+        return False
+    elif type_ == 'HELP':
+        qs = ShiftSubmissionPeriod.objects.filter(type='HELP', is_active=True)
+        if exclude_id:
+            qs = qs.exclude(id=exclude_id)
+        for period in qs:
+            if (start_date == period.start_date and
+                end_date == period.end_date and
+                start_time == period.start_time and
+                end_time == period.end_time):
+                return True
+        return False
+    return False
+
+def make_help_label(start_date, start_time, end_time):
+    # 例: 2024年06月05日：09:00～12:00
+    label = f"{start_date.strftime('%Y年%m月%d日')}：{start_time.strftime('%H:%M')}～{end_time.strftime('%H:%M')}"
+    return label
+
 @user_passes_test(lambda u: u.is_superuser)
 def shift_management_view(request):
-    all_periods = ShiftSubmissionPeriod.objects.all().order_by('-start_date')
-    active_periods = all_periods.filter(is_active=True)
+    # ❶ 期限切れを自動停止
+    close_expired_periods()
+
+    # 期間指定パラメータ取得
+    show_past = request.GET.get("show_past") == "1"
+    past_from = request.GET.get("past_from")
+    past_to   = request.GET.get("past_to")
+
+    qs = ShiftSubmissionPeriod.objects.all().order_by('-start_date')
+    active_periods   = qs.filter(is_active=True)
+    inactive_periods = qs.filter(is_active=False)
+
+    # ---- 停止中の絞り込み ----
+    if show_past and (past_from or past_to):          # ← 両方空なら表示しない
+        if past_from:
+            inactive_periods = inactive_periods.filter(end_date__gte=past_from)
+        if past_to:
+            inactive_periods = inactive_periods.filter(end_date__lte=past_to)
+    else:
+        inactive_periods = inactive_periods.none()    # ← ここで空に
+
+
+    # ❹ スタッフ一覧
     staff_list = Staff.objects.filter(is_active=True)
 
-    # 集計対象期間の選択
-    period_id = request.GET.get("period_id")
+    # ❺ 集計対象期間
     selected_period = None
     submissions = {}
+    period_id = request.GET.get("period_id")
     if period_id:
-        selected_period = ShiftSubmissionPeriod.objects.get(id=period_id)
+        selected_period = get_object_or_404(ShiftSubmissionPeriod, id=period_id)
         for s in staff_list:
-            submission = ShiftSubmission.objects.filter(
-                staff=s, period=selected_period
-            ).order_by('-updated_at').first()
-            if submission:
-                submissions[s.id] = submission
+            sub = (
+                ShiftSubmission.objects
+                .filter(staff=s, period=selected_period)
+                .order_by('-updated_at')
+                .first()
+            )
+            if sub:
+                submissions[s.id] = sub
 
     # 新規作成処理
     if request.method == "POST":
-        start_date = request.POST.get("start_date")
-        end_date = request.POST.get("end_date")
-        is_default = request.POST.get("is_default") == "True"  # True/False文字列→bool
-        if start_date and end_date:
-            ShiftSubmissionPeriod.objects.create(
-                start_date=start_date,
-                end_date=end_date,
-                is_active=True,
-                is_default=is_default
-            )
+        start_date = parse_date(request.POST.get("start_date"))
+        end_date = parse_date(request.POST.get("end_date"))
+        type_ = request.POST.get("type")
+        label = request.POST.get("label", "")
+        start_time = parse_time(request.POST.get("start_time"))
+        end_time = parse_time(request.POST.get("end_time"))
+        auto_close_date = parse_datetime(request.POST.get("auto_close_date") or None)
+        
+        if type_ == "HELP":
+            label = make_help_label(start_date, start_time, end_time)
+
+        if has_duplicate_period(type_, start_date, end_date, start_time, end_time):
+            messages.error(request, "重複している募集期間がすでに存在します。")
+            return redirect("shiftgenerator:shift-management-view")
+
+        ShiftSubmissionPeriod.objects.create(
+            label=label,
+            start_date=start_date,
+            end_date=end_date,
+            type=type_,
+            is_active=True,
+            start_time=start_time,
+            end_time=end_time,
+            auto_close_date=auto_close_date,
+        )
+        messages.success(request, "新しい募集期間を作成しました。")
         return redirect("shiftgenerator:shift-management-view")
 
-    # 直近の期間をテンプレートへ    
-    latest_period = ShiftSubmissionPeriod.objects.filter(is_default=True).order_by('-end_date').first()
+
+    # ❼ 直近のデフォルト期間
+    latest_period  = ShiftSubmissionPeriod.objects.filter(type="default").order_by('-end_date').first()
     latest_pattern = guess_period_pattern(latest_period)
-    print(f"Latest period: {latest_period}")
-    print(f"Latest pattern: {latest_pattern}")
+    
+    print("show_past=", show_past, "from=", past_from, "to=", past_to)
+    print("inactive COUNT=", inactive_periods.count())
+
+    # ❽ テンプレートへ渡す
     return render(request, "shiftgenerator/shift_management_view.html", {
-        "all_periods": all_periods,
-        "active_periods": active_periods,
-        "staff_list": staff_list,
-        "selected_period": selected_period,
-        "submissions": submissions,
-        "latest_period": latest_period, # 直近の期間
-        "latest_pattern": latest_pattern, # 直近の期間のパターン
+        "active_periods"  : active_periods,
+        "inactive_periods": inactive_periods,
+        "show_past"       : show_past,
+        "past_from"       : past_from,
+        "past_to"         : past_to,
+        "staff_list"      : staff_list,
+        "selected_period" : selected_period,
+        "submissions"     : submissions,
+        "latest_period"   : latest_period,
+        "latest_pattern"  : latest_pattern,
     })
 
 @require_POST
 @user_passes_test(lambda u: u.is_superuser)
 def shift_period_edit(request, id):
     period = get_object_or_404(ShiftSubmissionPeriod, id=id)
-    period.start_date = request.POST['start_date']
-    period.end_date = request.POST['end_date']
-    period.is_default = request.POST.get('is_default') == "True"
+    type_ = request.POST['type']
+    start_date = parse_date(request.POST.get('start_date'))
+    end_date = parse_date(request.POST.get('end_date'))
+    start_time = parse_time(request.POST.get('start_time'))
+    end_time = parse_time(request.POST.get('end_time'))
+    auto_close_date = parse_datetime(request.POST.get("auto_close_date") or None)
+
+    
+    if type_ == "HELP":
+        label = make_help_label(start_date, start_time, end_time)
+        period.label = label
+    else:
+        period.label = request.POST.get("label", "")
+
+    # ← ここで exclude_id=id を必ず渡す！
+    if has_duplicate_period(type_, start_date, end_date, start_time, end_time, exclude_id=id):
+        messages.error(request, "重複している募集期間がすでに存在します。")
+        return redirect("shiftgenerator:shift-management-view")
+
+    period.type = type_
+    period.start_date = start_date
+    period.end_date = end_date
+    period.start_time = start_time
+    period.end_time = end_time
+    period.auto_close_date = auto_close_date
     period.save()
+    messages.success(request, "募集期間を更新しました。")
     return redirect('shiftgenerator:shift-management-view')
+
 
 @require_POST
 def shift_period_delete(request, period_id):
     period = get_object_or_404(ShiftSubmissionPeriod, id=period_id)
     period.delete()
+    return redirect('shiftgenerator:shift-management-view')
+
+@require_POST
+@user_passes_test(lambda u: u.is_superuser)
+def shift_period_reopen(request, period_id):
+    period = get_object_or_404(ShiftSubmissionPeriod, id=period_id)
+    auto_close = request.POST.get("auto_close_date")
+    period.is_active = True
+    if auto_close:                 # 空ならそのまま
+        period.auto_close_date = parse_datetime(auto_close)
+    period.save()
+    messages.success(request, "募集期間を再開しました。")
+    return redirect('shiftgenerator:shift-management-view')
+
+
+
+@require_POST
+@user_passes_test(lambda u: u.is_superuser)
+def shift_period_stop(request, period_id):
+    period = get_object_or_404(ShiftSubmissionPeriod, id=period_id)
+    period.is_active = False
+    period.save()
+    messages.success(request, "募集期間を停止しました。")
     return redirect('shiftgenerator:shift-management-view')
 
 @superuser_required
