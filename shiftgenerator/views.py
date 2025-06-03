@@ -544,6 +544,9 @@ def shift_form(request):
     
     # シフト履歴を取得
     history = ShiftHistory.objects.filter(staff=staff_profile).order_by('-created_at')[:10]
+    
+    # 受付中の期間リスト取得
+    active_periods = ShiftSubmissionPeriod.objects.filter(is_active=True).order_by('start_date')
 
     # データをJSON形式に変換
     events = []
@@ -601,6 +604,7 @@ def shift_form(request):
 
     context = {
         'user': user,
+        'active_periods': active_periods,
         'events': events_json,
         'name': staff_profile.name,
         'username': user.username,
@@ -608,6 +612,67 @@ def shift_form(request):
     }
     
     return render(request, 'shiftgenerator/shift_form.html', context)
+
+@login_required
+def submit_shift(request):
+    user = request.user
+    staff_profile = getattr(user, 'staff_profile', None)
+    if not staff_profile:
+        return JsonResponse({'success': False, 'error': 'スタッフ情報が見つかりません。'})
+
+    if request.method == "POST":
+        period_id = request.POST.get("period_id")
+        if not period_id:
+            return JsonResponse({'success': False, 'error': '提出期間を選択してください。'})
+        period = get_object_or_404(ShiftSubmissionPeriod, id=period_id, is_active=True)
+
+        # シフト希望一覧をdictリスト化、日付・時間はすべてisoformat文字列に変換
+        shift_qs = ShiftPreference.objects.filter(
+            staff=staff_profile,
+            date__range=(period.start_date, period.end_date)
+        ).order_by('date', 'starttime', 'endtime', 'holiday_id')
+        
+        current_prefs = []
+        for pref in shift_qs:
+            current_prefs.append({
+                'date': pref.date.isoformat() if pref.date else None,
+                'starttime': pref.starttime.strftime('%H:%M') if pref.starttime else None,
+                'endtime': pref.endtime.strftime('%H:%M') if pref.endtime else None,
+                'confirmed_starttime': pref.confirmed_starttime.strftime('%H:%M') if pref.confirmed_starttime else None,
+                'confirmed_endtime': pref.confirmed_endtime.strftime('%H:%M') if pref.confirmed_endtime else None,
+                'holiday_id': pref.holiday_id,
+            })
+
+        prev_submission = (
+            ShiftSubmission.objects.filter(staff=staff_profile, period=period)
+            .order_by('-updated_at').first()
+        )
+        if prev_submission and prev_submission.snapshot:
+            if current_prefs == prev_submission.snapshot:
+                # 完全一致なら「変更なし」
+                return JsonResponse({
+                    'success': False,
+                    'no_change': True,
+                    'message': '前回提出内容と全く同じです。'
+                })
+
+        status = "再提出" if prev_submission else "初回"
+        comment = request.POST.get("period_comment", "")
+        ShiftSubmission.objects.create(
+            staff=staff_profile,
+            period=period,
+            comment=comment,
+            submission_status=status,
+            snapshot=current_prefs  # ← すべて文字列なのでJSONでOK！
+        )
+        return JsonResponse({
+            'success': True,
+            'period_label': period.label,
+            'status': status
+        })
+
+    return JsonResponse({'success': False, 'error': '無効なリクエストです。'})
+
 
 @login_required
 def shift_detail(request, shift_id):
@@ -620,7 +685,6 @@ def shift_detail(request, shift_id):
     shift_starttime = shift.starttime.strftime("%H:%M") if shift.starttime else '--'
     shift_endtime = shift.endtime.strftime("%H:%M") if shift.endtime else '--'
     holiday_name = shift.holiday.holiday_name if shift.holiday else '--'
-    description = shift.description if shift.description else '--'
 
     if request.method == 'POST':
         # シフトを削除
@@ -633,7 +697,6 @@ def shift_detail(request, shift_id):
         'shift_starttime': shift_starttime,
         'shift_endtime': shift_endtime,
         'holiday_name': holiday_name,
-        'description': description,
     })
 
 # シフト履歴を取得するAPI

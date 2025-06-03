@@ -52,16 +52,67 @@
         <p>こんにちは, {{ user.username }}さん</p> <!-- ユーザー名の表示 -->
         <p>こんにちは、staff : {{ name }}さん (カスタムユーザー: {{ username }})</p>
         
-            <label>受付中の募集期間を選んでください:</label>
-                <select name="submission_period" required>
-                {% for period in active_periods %}
-                    <option value="{{ period.id }}">
-                    [{{ period.get_type_display }}] {{ period.label }} 
-                    （{{ period.start_date }} {{ period.start_time|default:"00:00" }} 
-                    〜 {{ period.end_date }} {{ period.end_time|default:"23:59" }}）
-                    </option>
-                {% endfor %}
-                </select>
+    <form id="shiftSubmitForm" method="POST" action="{% url 'shiftgenerator:submit-shift' %}">
+    {% csrf_token %}
+    <div class="form-group">
+        <label for="periodSelect"><b>受付中の募集期間を選択</b></label>
+        <select class="form-control" id="periodSelect" name="period_id" required>
+        <option value="">-- 選択してください --</option>
+        {% for period in active_periods %}
+            <option value="{{ period.id }}">
+            {{ period.label }}（{{ period.start_date }}〜{{ period.end_date }}）
+            </option>
+        {% endfor %}
+        </select>
+    </div>
+    <div class="form-group">
+        <label for="periodComment">この期間に関するコメント（空欄でもOK）</label>
+        <textarea class="form-control" id="periodComment" name="period_comment" rows="2" placeholder="伝えたいことがあれば記入"></textarea>
+    </div>
+
+    <!-- ここに希望シフト入力欄（既存のもの） -->
+
+    <button type="submit" class="btn btn-primary mt-3">この内容で提出</button>
+    </form>
+
+    <!-- 提出完了モーダル -->
+    <div class="modal fade" id="submitDoneModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+        <div class="modal-header">
+            <h5 class="modal-title">提出完了</h5>
+            <button type="button" class="close" data-dismiss="modal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p>シフト希望を提出しました！</p>
+            <p>期間：<span id="modalPeriodLabel"></span></p>
+            <p>ステータス：<span id="modalStatus"></span></p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary" data-dismiss="modal">閉じる</button>
+        </div>
+        </div>
+    </div>
+    </div>
+
+    <!-- 変更なしモーダル -->
+    <div class="modal fade" id="noChangeModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+        <div class="modal-header">
+            <h5 class="modal-title">変更はありません</h5>
+            <button type="button" class="close" data-dismiss="modal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p>前回提出内容と全く同じです。変更はありません。</p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary" data-dismiss="modal">閉じる</button>
+        </div>
+        </div>
+    </div>
+    </div>
+
 
          <a href="{% if user.is_superuser %}{% url 'shiftgenerator:admin-home' %}{% else %}{% url 'shiftgenerator:staff-home' %}{% endif %}" 
             class="btn btn-primary mb-3">
@@ -78,7 +129,7 @@
     {% endif %}
 
 
-    <!-- モーダルウィンドウのHTML -->
+    <!-- 新規登録モーダルウィンドウのHTML -->
     <div class="modal fade" id="shiftModal" tabindex="-1" role="dialog" aria-labelledby="shiftModalLabel" aria-hidden="true">
         <div class="modal-dialog" role="document">
             <div class="modal-content">
@@ -126,7 +177,7 @@
 
     <!-- FullCalendarのJSと依存関係 -->
     <script src="https://cdn.jsdelivr.net/npm/fullcalendar@5.10.1/main.min.js"></script>
-    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.5.2/dist/js/bootstrap.bundle.min.js"></script>
 
     <script>
@@ -406,6 +457,37 @@ document.addEventListener('DOMContentLoaded', function() {
         })
         .catch(error => console.error('カレンダー更新エラー:', error));
     };
+
+
+    $('#shiftSubmitForm').on('submit', function(e) {
+        e.preventDefault();
+        const form = $(this);
+
+        $.ajax({
+            url: form.attr('action'),
+            type: 'POST',
+            data: form.serialize(),
+            success: function(data) {
+            // Django viewからJSONで返す形にするのがベスト
+            if (data.success) {
+                $('#modalPeriodLabel').text(data.period_label);
+                $('#modalStatus').text(data.status);
+                $('#submitDoneModal').modal('show');
+                $('#periodComment').val('');
+            } else if (data.no_change) {
+                // 「変更ありません」用モーダルやメッセージを出す
+                $('#noChangeModal').modal('show');
+                $('#periodComment').val('');
+            } else {
+                alert(data.error || '提出に失敗しました');
+            }
+            },
+            error: function() {
+            alert('通信エラー');
+            }
+        });
+        });
+
 
 
 // 最初のカレンダー描画

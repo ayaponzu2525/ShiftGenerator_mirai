@@ -152,7 +152,6 @@ class ShiftPreference(models.Model):
     confirmed_endtime = models.TimeField(null=True, blank=True)  # 確定終了時刻
     day_of_week = models.ForeignKey(DayOfWeek, on_delete=models.CASCADE)  # DayOfWeek モデルとの関連付け
     holiday = models.ForeignKey(Holiday, on_delete=models.SET_NULL, null=True, blank=True)  # Holiday モデルとの関連付け
-    description = models.TextField(null=True, blank=True)  # 説明を追加
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -215,10 +214,10 @@ class ShiftSubmission(models.Model):
         choices=[
             ('初回', '初回'), 
             ('再提出', '再提出'),
-            ('遅刻', '遅刻'),
         ],
         default='初回'
     )
+    snapshot = models.JSONField(blank=True, null=True)
 
     def __str__(self):
         return f"{self.staff.name} {self.period.label} {self.submission_status}"

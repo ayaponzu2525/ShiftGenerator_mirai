@@ -8,6 +8,8 @@ app_name = 'shiftgenerator'
 urlpatterns = [
     path('', views.index, name='index'),
     path('shift-form/', views.shift_form, name='shift-form'),
+    path('submit-shift/', views.submit_shift, name='submit-shift'),
+
     path('shift-register/', views.shift_register, name='shift-register'),
     path('new-register-shift/', views.new_register_shift, name='new-register-shift'),
     path('shift-detail/<int:shift_id>/', views.shift_detail, name='shift-detail'),
