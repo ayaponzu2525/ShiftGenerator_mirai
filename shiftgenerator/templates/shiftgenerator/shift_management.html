@@ -90,6 +90,13 @@
       border: 2px dashed #62cf97 !important;
       z-index: 0;  /* 一番奥に */
     }
+
+  .register-item {
+    background-color: rgba(255, 165, 0, 0.6); /* オレンジ半透明 */
+    height: 10px !important;
+    border-radius: 4px;
+    margin-top: 15px !important; /* シフトバーに被らないよう少し下げる */
+  }
   </style>
 </head>
 <body class="bg-light">
@@ -158,6 +165,36 @@
       </div>
     </div>
 
+    <!-- ▼ レジ割当編集モーダル -->
+    <div class="modal fade" id="registerModal" tabindex="-1" role="dialog" aria-labelledby="registerModalLabel" aria-hidden="true">
+      <div class="modal-dialog" role="document">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="registerModalLabel">レジ割当編集</h5>
+            <button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
+          </div>
+          <div class="modal-body">
+
+            <div class="mb-3">
+              <strong>対象シフト:</strong>
+              <span id="registerShiftInfo"></span>
+            </div>
+
+            <div id="registerList">
+              <!-- 割当リストがここに入る -->
+            </div>
+
+            <button class="btn btn-outline-primary btn-sm mt-2" id="addRegisterBtn">＋ 新規割当</button>
+          </div>
+          <div class="modal-footer">
+            <button id="saveRegisterBtn" class="btn btn-primary">保存</button>
+            <button class="btn btn-secondary" data-dismiss="modal">閉じる</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
     <!-- タイムライン表示 -->
     <div class="card shadow-sm mt-4">
       <div class="card-body" style="padding: 0;">
@@ -213,6 +250,29 @@
         },
         {% endfor %}
     ]);
+
+    // レジ割当データ
+    const registerItems = [
+      {% for reg in register_assignments %}
+        {
+          id: 'reg-{{ reg.id }}',
+          group: {{ reg.group }},
+          content: '{{ reg.content }}',
+          start: '{{ reg.start }}',
+          end: '{{ reg.end }}',
+          type: 'range',
+          editable: false,
+          className: 'register-item'
+        },
+      {% endfor %}
+    ];
+    registerItems.forEach(item => items.add(item));
+
+    items.get().forEach(item => {
+      if (item.id.toString().startsWith('reg')) {
+        console.log(item.id, item.start, item.end, new Date(item.start) > new Date(item.end) ? '🛑エラー' : '✅OK');
+      }
+    });
 
     // シフト希望データ（背景アイテム化）
     const wishItems = [
@@ -356,6 +416,110 @@
     // メインのタイムライン
     var container = document.getElementById('timeline');
     var timeline = new vis.Timeline(container, items, groups, options);
+
+    let currentShiftId = null;
+    let registerAssignments = [];  // 一時保存
+
+    // アイテムクリック時に呼び出し
+    timeline.on('select', function (props) {
+      const itemId = props.items[0];
+      if (!itemId) return;
+
+      currentShiftId = itemId;
+      const shiftItem = items.get(itemId);
+
+      // 確定シフト情報を表示
+      const startTime = new Date(shiftItem.start).toLocaleTimeString('ja-JP', {hour:'2-digit', minute:'2-digit'});
+      const endTime = new Date(shiftItem.end).toLocaleTimeString('ja-JP', {hour:'2-digit', minute:'2-digit'});
+      $('#registerShiftInfo').text(`${startTime} 〜 ${endTime}`);
+
+      // 既存割当を読み込み
+      fetch(`/get-register-assignments/?shift_id=${itemId}`, {
+        method: 'GET',
+        credentials: 'same-origin'
+      })
+        .then(res => res.json())
+        .then(data => {
+          registerAssignments = data.assignments;
+          renderRegisterList();
+          $('#registerModal').modal('show');
+        });
+
+    });
+
+    // 割当リスト描画
+    function renderRegisterList() {
+      const list = $('#registerList');
+      list.empty();
+
+      registerAssignments.forEach((a, index) => {
+        const row = $(`
+          <div class="input-group mb-2">
+            <select class="form-control regNum">
+              <option>①</option><option>②</option><option>③</option><option>④</option>
+            </select>
+            <input type="number" class="form-control startOffset" placeholder="開始(分)">
+            <input type="number" class="form-control endOffset" placeholder="終了(分)">
+            <button class="btn btn-danger removeBtn">&times;</button>
+          </div>
+        `);
+        row.find('.regNum').val(a.register_number);
+        row.find('.startOffset').val(a.start_offset);
+        row.find('.endOffset').val(a.end_offset);
+
+        row.find('.removeBtn').click(() => {
+          registerAssignments.splice(index, 1);
+          renderRegisterList();
+        });
+
+        list.append(row);
+      });
+    }
+
+    // 新規追加
+    $('#addRegisterBtn').click(() => {
+      registerAssignments.push({
+        shift_id: currentShiftId,
+        register_number: 2,
+        start_offset: 0,
+        end_offset: 60
+      });
+      renderRegisterList();
+    });
+
+    // 保存処理
+    $('#saveRegisterBtn').click(() => {
+      const payload = [];
+
+      $('#registerList .input-group').each(function() {
+        const regNum = $(this).find('.regNum').val().replace('①','1').replace('②','2').replace('③','3').replace('④','4');
+        const start = parseInt($(this).find('.startOffset').val());
+        const end = parseInt($(this).find('.endOffset').val());
+        payload.push({
+          shift_id: currentShiftId,
+          register_number: parseInt(regNum),
+          start_offset: start,
+          end_offset: end
+        });
+      });
+
+      fetch('/save-register-assignments/', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}'},
+        body: JSON.stringify({ assignments: payload })
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) {
+          alert('保存しました');
+          $('#registerModal').modal('hide');
+          window.location.reload();
+        } else {
+          alert('保存失敗: ' + data.error);
+        }
+      });
+    });
+
 
     // 固定時間軸のセットアップ
     setupFixedTimeAxis();

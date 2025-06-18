@@ -19,6 +19,13 @@
     .table td, .badge {
       white-space: nowrap;
     }
+
+    .comment-cell {
+      max-width: 250px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
   </style>
 </head>
 <body class="bg-light">
@@ -305,7 +312,7 @@
   <div class="card-header"><strong>提出状況集計</strong></div>
   <div class="card-body">
     <form method="get" class="form-inline mb-2">
-        <select name="period_id" class="form-control mr-2">
+        <select name="period_id" class="form-control mr-2" onchange="this.form.submit()">
           {% for period in all_periods %}
             <option value="{{ period.id }}" {% if period.id|stringformat:"s" == request.GET.period_id %}selected{% endif %}>
               {% if period.type == "default" %}[通常]{% elif period.type == "temporary" %}[臨時]{% elif period.type == "HELP" %}[HELP]{% endif %} {{ period.label }}
@@ -313,7 +320,27 @@
           {% endfor %}
         </select>
     </form>
+
     {% if selected_period %}
+    <table class="table table-bordered w-100 mb-3">
+      <thead class="thead-light">
+        <tr>
+          <th>スタッフ総数</th>
+          <th>提出済</th>
+          <th>未提出</th>
+          <th>提出率</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>{{ total_staff }}人</td>
+          <td>{{ submitted_staff }}人</td>
+          <td>{{ unsubmitted_staff|length }}人</td>
+          <td>{{ submission_rate|floatformat:1 }}%</td>
+        </tr>
+      </tbody>
+    </table>
+
       <table class="table table-bordered">
         <thead>
           <tr>
@@ -325,20 +352,28 @@
         </thead>
         <tbody>
           {% for staff in staff_list %}
-          {% with submission=submissions|get_item:staff.id %}
+            {% with submission=submissions|get_item:staff.id %}
             <tr>
               <td>{{ staff.name }}</td>
               <td>
                 {% if submission %}
-                  <span class="badge badge-success">{{ submission.submission_status }}</span>
+                  {% if submission.submission_status == "初回" %}
+                    <span class="badge badge-success">{{ submission.submission_status }}</span>
+                  {% elif submission.submission_status == "再提出" %}
+                    <span class="badge badge-warning text-dark">{{ submission.submission_status }}</span>
+                  {% else %}
+                    <span class="badge badge-secondary">{{ submission.submission_status }}</span>
+                  {% endif %}
                 {% else %}
                   <span class="badge badge-danger">未提出</span>
                 {% endif %}
               </td>
-              <td>{% if submission %}{{ submission.comment }}{% endif %}</td>
-              <td>{% if submission %}{{ submission.updated_at|date:"Y-m-d H:i" }}{% endif %}</td>
+              <td class="comment-cell" title="{% if submission %}{{ submission.comment|default:"（なし）" }}{% else %}-{% endif %}">
+                {% if submission %}{{ submission.comment|default:"（なし）" }}{% else %}-{% endif %}
+              </td>
+              <td>{% if submission %}{{ submission.updated_at|date:"Y-m-d H:i" }}{% else %}-{% endif %}</td>
             </tr>
-          {% endwith %}
+            {% endwith %}
           {% endfor %}
         </tbody>
       </table>
@@ -643,6 +678,10 @@ function updatePeriodModalUI(modal, mode) {
 }
 
 
+  // 共通のクリアイベント登録（作成・編集どちらでも適用）
+  $('.clearAutoCloseBtn').off('click').on('click', function() {
+    $(this).closest('.input-group').find('input[type="datetime-local"]').val('');
+  });
 
 
 

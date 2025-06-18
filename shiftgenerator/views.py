@@ -20,10 +20,10 @@ import json
 import traceback
 from datetime import datetime, date, timedelta, time
 import csv
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_POST, require_GET
 
 from .forms import CustomUserCreationForm, ShiftPreferenceForm
-from .models import ShiftPreference, Staff, DayOfWeek, ShiftHistory, Holiday, Skill, StaffSkill, ShiftSubmissionPeriod, ShiftSubmission
+from .models import ShiftPreference, Staff, DayOfWeek, ShiftRegisterAssignment, ShiftHistory, Holiday, Skill, StaffSkill, ShiftSubmissionPeriod, ShiftSubmission
 from django.contrib.auth.hashers import make_password
 from django.contrib import messages
 from django.db.models import Exists, OuterRef, Q
@@ -146,6 +146,116 @@ def save_shifts(request):
         return JsonResponse({'success': True})
 
     return JsonResponse({'success': False})
+
+
+@require_POST
+@user_passes_test(lambda u: u.is_superuser)
+def save_register_assignments(request):
+    try:
+        data = json.loads(request.body)
+        assignments = data.get('assignments', [])
+
+        if not assignments:
+            return JsonResponse({'success': False, 'error': 'データが空です'})
+
+        # ここで全体まとめて読み込む（事前バリデーション用）
+        shift_objs = ShiftPreference.objects.in_bulk(
+            [a['shift_id'] for a in assignments]
+        )
+
+        # 重複チェック用に、日付＋レジ番号＋時間帯を一旦展開
+        register_slots = []
+
+        for assignment in assignments:
+            shift_id = assignment['shift_id']
+            register_number = assignment['register_number']
+            start_offset = assignment['start_offset']
+            end_offset = assignment['end_offset']
+
+            shift = shift_objs[shift_id]
+
+            shift_start_dt = datetime.combine(shift.date, shift.confirmed_starttime)
+            reg_start = shift_start_dt + timedelta(minutes=start_offset)
+            reg_end = shift_start_dt + timedelta(minutes=end_offset)
+
+            register_slots.append({
+                'date': shift.date,
+                'register_number': register_number,
+                'start': reg_start,
+                'end': reg_end
+            })
+
+        # 重複確認
+        for i in range(len(register_slots)):
+            for j in range(i+1, len(register_slots)):
+                r1 = register_slots[i]
+                r2 = register_slots[j]
+                if (
+                    r1['date'] == r2['date'] and
+                    r1['register_number'] == r2['register_number'] and
+                    not (r1['end'] <= r2['start'] or r2['end'] <= r1['start'])
+                ):
+                    return JsonResponse({
+                        'success': False,
+                        'error': f"レジ{r1['register_number']}が{r1['date']}で重複しています"
+                    })
+
+        # 保存処理（ここだけ上書き方式に整理）
+        for shift_id, shift in shift_objs.items():
+            shift.register_assignments.all().delete()
+
+        for assignment in assignments:
+            shift_id = assignment['shift_id']
+            register_number = assignment['register_number']
+            start_offset = assignment['start_offset']
+            end_offset = assignment['end_offset']
+
+            shift = shift_objs[shift_id]
+
+            ShiftRegisterAssignment.objects.create(
+                shift=shift,
+                register_number=register_number,
+                start_offset=start_offset,
+                end_offset=end_offset
+            )
+
+        return JsonResponse({'success': True})
+
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)})
+
+
+@require_GET
+@user_passes_test(lambda u: u.is_superuser)
+def get_register_assignments(request):
+    shift_id = request.GET.get('shift_id')
+    try:
+        shift = ShiftPreference.objects.get(id=shift_id)
+        assignments = shift.register_assignments.all()
+
+        data = [{
+            'id': reg.id,
+            'register_number': reg.register_number,
+            'start_offset': reg.start_offset,
+            'end_offset': reg.end_offset,
+        } for reg in assignments]
+
+        return JsonResponse({'assignments': data})
+    except ShiftPreference.DoesNotExist:
+        return JsonResponse({'assignments': []})
+
+    
+    
+@require_POST
+@user_passes_test(lambda u: u.is_superuser)
+def delete_register_assignment(request):
+    try:
+        data = json.loads(request.body)
+        reg_id = data.get('id')
+        ShiftRegisterAssignment.objects.filter(id=reg_id).delete()
+        return JsonResponse({'success': True})
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)})
 
 
 
@@ -275,10 +385,10 @@ def shift_management_view(request):
         inactive_periods = inactive_periods.none()    # ← ここで空に
 
 
-    # ❹ スタッフ一覧
+    # ❹ スタッフ一覧(有効スタッフのみ)
     staff_list = Staff.objects.filter(is_active=True)
 
-    # ❺ 集計対象期間
+    # ❺ 提出状況の集計
     selected_period = None
     submissions = {}
     period_id = request.GET.get("period_id")
@@ -331,19 +441,33 @@ def shift_management_view(request):
     
     print("show_past=", show_past, "from=", past_from, "to=", past_to)
     print("inactive COUNT=", inactive_periods.count())
+    
+    # ✅ 集計用データ
+    total_staff = staff_list.count()
+    submitted_staff = len(submissions)
+    submission_rate = (submitted_staff / total_staff) * 100 if total_staff > 0 else 0
+    unsubmitted_staff = [s for s in staff_list if s.id not in submissions]
+    all_periods = ShiftSubmissionPeriod.objects.all().order_by('-start_date')
 
     # ❽ テンプレートへ渡す
     return render(request, "shiftgenerator/shift_management_view.html", {
-        "active_periods"  : active_periods,
+        "active_periods": active_periods,
         "inactive_periods": inactive_periods,
-        "show_past"       : show_past,
-        "past_from"       : past_from,
-        "past_to"         : past_to,
-        "staff_list"      : staff_list,
-        "selected_period" : selected_period,
-        "submissions"     : submissions,
-        "latest_period"   : latest_period,
-        "latest_pattern"  : latest_pattern,
+        "show_past": show_past,
+        "past_from": past_from,
+        "past_to": past_to,
+        "staff_list": staff_list,
+        "selected_period": selected_period,
+        "submissions": submissions,
+
+        "total_staff": total_staff,
+        "submitted_staff": submitted_staff,
+        "submission_rate": submission_rate,
+        "unsubmitted_staff": unsubmitted_staff,
+
+        "all_periods": all_periods,
+        "latest_period": latest_period,
+        "latest_pattern": latest_pattern,
     })
 
 @require_POST
@@ -355,7 +479,12 @@ def shift_period_edit(request, id):
     end_date = parse_date(request.POST.get('end_date'))
     start_time = parse_time(request.POST.get('start_time'))
     end_time = parse_time(request.POST.get('end_time'))
-    auto_close_date = parse_datetime(request.POST.get("auto_close_date") or None)
+    auto_close_date_str = request.POST.get("auto_close_date")
+    if auto_close_date_str:
+        auto_close_date = parse_datetime(auto_close_date_str)
+    else:
+        auto_close_date = None
+
 
     
     if type_ == "HELP":
@@ -518,12 +647,28 @@ def shift_management(request):
         preference.confirmed_starttime = datetime.combine(preference.date, preference.confirmed_starttime)
         preference.confirmed_endtime = datetime.combine(preference.date, preference.confirmed_endtime)
 
+    register_assignments = ShiftRegisterAssignment.objects.all()
+    register_data = []
+    for reg in register_assignments:
+        shift_start = datetime.combine(reg.shift.date, reg.shift.confirmed_starttime)
+        reg_start = shift_start + timedelta(minutes=reg.start_offset)
+        reg_end = shift_start + timedelta(minutes=reg.end_offset)
+
+        register_data.append({
+            'id': reg.id,
+            'group': reg.shift.staff.id,
+            'content': f'レジ{reg.register_number}',
+            'start': reg_start.isoformat(),
+            'end': reg_end.isoformat(),
+        })
+        
     context = {
         'preferences': preferences,
         'staff': staff,
         'wish_preferences': wish_preferences,
         'date': target_date.isoformat(),
-        'selected_date': target_date
+        'selected_date': target_date,
+        'register_assignments': register_data,
     }
     return render(request, 'shiftgenerator/shift_management.html', context)
 

@@ -160,6 +160,28 @@ class ShiftPreference(models.Model):
         holiday_name = self.holiday.holiday_name if self.holiday else 'なし'
         return f'{self.staff.name} - {self.day_of_week.day_name} {self.date} {self.starttime} to {self.endtime} ({holiday_name})'
 
+
+class ShiftRegisterAssignment(models.Model):
+    id = models.AutoField(primary_key=True)
+
+    # ShiftPreference との関連
+    shift = models.ForeignKey(ShiftPreference, on_delete=models.CASCADE, related_name='register_assignments')
+
+    # レジ番号 (例: 1, 2, 3, 4)
+    register_number = models.IntegerField()
+
+    # 確定開始からのオフセット（分）
+    start_offset = models.IntegerField()
+    end_offset = models.IntegerField()
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.shift.staff.name} {self.shift.date} レジ{self.register_number}: {self.start_offset}～{self.end_offset}分"
+
+
+
 class ShiftHistory(models.Model):
     id = models.AutoField(primary_key=True)
     staff = models.ForeignKey(Staff, on_delete=models.CASCADE)

@@ -34,6 +34,10 @@ urlpatterns = [
     path('shift-calendar-view/', views.shift_calendar_view, name='shift-calendar-view'),
     path('copy-shifts/', views.copy_shifts, name='copy-shifts'),
     path('save-shifts/', views.save_shifts, name='save-shifts'),
+    path('save-register-assignments/', views.save_register_assignments, name='save-register-assignments'),
+    path('delete-register-assignment/', views.delete_register_assignment, name='delete-register-assignment'),
+    path('get-register-assignments/', views.get_register_assignments, name='get-register-assignments'),
+
     
     path('staff-management/', views.staff_management, name='staff-management'),
     path('staff-disable/<int:staff_id>/', views.staff_disable, name='staff-disable'),

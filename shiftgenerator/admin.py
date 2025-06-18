@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.forms import UserChangeForm, UserCreationForm
 from .models import CustomUser, Staff, Skill, StaffSkill, DayOfWeek, ShiftPreference, ShiftHistory, Holiday
-from .models import ShiftSubmissionPeriod, ShiftSubmission
+from .models import ShiftSubmissionPeriod, ShiftSubmission, ShiftRegisterAssignment
 
 
 class CustomUserChangeForm(UserChangeForm):
@@ -57,3 +57,4 @@ admin.site.register(ShiftHistory)
 admin.site.register(Holiday, HolidayAdmin)
 admin.site.register(ShiftSubmissionPeriod)
 admin.site.register(ShiftSubmission)
+admin.site.register(ShiftRegisterAssignment)
