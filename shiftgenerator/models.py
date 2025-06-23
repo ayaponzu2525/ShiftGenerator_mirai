@@ -170,16 +170,18 @@ class ShiftRegisterAssignment(models.Model):
     # レジ番号 (例: 1, 2, 3, 4)
     register_number = models.IntegerField()
 
-    # 確定開始からのオフセット（分）
-    start_offset = models.IntegerField()
-    end_offset = models.IntegerField()
-
+    # 絶対時間
+    register_start_time = models.TimeField(null=True, blank=True)
+    register_end_time   = models.TimeField(null=True, blank=True)
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"{self.shift.staff.name} {self.shift.date} レジ{self.register_number}: {self.start_offset}～{self.end_offset}分"
-
+        # 絶対時間で表示
+        s = self.register_start_time.strftime('%H:%M') if self.register_start_time else '--:--'
+        e = self.register_end_time.strftime('%H:%M') if self.register_end_time else '--:--'
+        return f"{self.shift.staff.name} {self.shift.date} レジ{self.register_number}: {s}～{e}"
 
 
 class ShiftHistory(models.Model):

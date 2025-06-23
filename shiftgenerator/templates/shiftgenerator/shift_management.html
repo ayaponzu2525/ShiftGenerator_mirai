@@ -440,7 +440,12 @@
       })
         .then(res => res.json())
         .then(data => {
-          registerAssignments = data.assignments;
+          registerAssignments = data.assignments.map(a => ({
+            id: a.id, // 既存DB ID（新規はnull）
+            register_number: a.register_number,
+            register_start_time: a.register_start_time, // "09:30"
+            register_end_time: a.register_end_time      // "12:00"
+          }));
           renderRegisterList();
           $('#registerModal').modal('show');
         });
@@ -455,17 +460,19 @@
       registerAssignments.forEach((a, index) => {
         const row = $(`
           <div class="input-group mb-2">
-            <select class="form-control regNum">
-              <option>①</option><option>②</option><option>③</option><option>④</option>
+            <select class="form-control regNum" style="max-width:60px;">
+              <option value="1">①</option><option value="2">②</option>
+              <option value="3">③</option><option value="4">④</option>
             </select>
-            <input type="number" class="form-control startOffset" placeholder="開始(分)">
-            <input type="number" class="form-control endOffset" placeholder="終了(分)">
+            <input type="time" class="form-control regStartTime" style="max-width:120px;" required>
+            <span class="input-group-text">〜</span>
+            <input type="time" class="form-control regEndTime" style="max-width:120px;" required>
             <button class="btn btn-danger removeBtn">&times;</button>
           </div>
         `);
         row.find('.regNum').val(a.register_number);
-        row.find('.startOffset').val(a.start_offset);
-        row.find('.endOffset').val(a.end_offset);
+        row.find('.regStartTime').val(a.register_start_time);
+        row.find('.regEndTime').val(a.register_end_time);
 
         row.find('.removeBtn').click(() => {
           registerAssignments.splice(index, 1);
@@ -475,33 +482,38 @@
         list.append(row);
       });
     }
-
-    // 新規追加
+    // 新規割当追加ボタン
     $('#addRegisterBtn').click(() => {
+      // デフォルト値は、シフトの開始〜終了
+      const shiftItem = items.get(currentShiftId);
+      const start = new Date(shiftItem.start).toTimeString().slice(0, 5);
+      const end = new Date(shiftItem.end).toTimeString().slice(0, 5);
+
       registerAssignments.push({
-        shift_id: currentShiftId,
-        register_number: 2,
-        start_offset: 0,
-        end_offset: 60
+        id: null, // 新規
+        register_number: 1,
+        register_start_time: start,
+        register_end_time: end
       });
       renderRegisterList();
     });
 
     // 保存処理
     $('#saveRegisterBtn').click(() => {
-      const payload = [];
-
-      $('#registerList .input-group').each(function() {
-        const regNum = $(this).find('.regNum').val().replace('①','1').replace('②','2').replace('③','3').replace('④','4');
-        const start = parseInt($(this).find('.startOffset').val());
-        const end = parseInt($(this).find('.endOffset').val());
-        payload.push({
-          shift_id: currentShiftId,
-          register_number: parseInt(regNum),
-          start_offset: start,
-          end_offset: end
-        });
+      // 入力値を反映（inputの値を取得）
+      $('#registerList .input-group').each(function(i) {
+        registerAssignments[i].register_number = parseInt($(this).find('.regNum').val());
+        registerAssignments[i].register_start_time = $(this).find('.regStartTime').val();
+        registerAssignments[i].register_end_time = $(this).find('.regEndTime').val();
       });
+
+      // API用ペイロード
+      const payload = registerAssignments.map(a => ({
+        shift_id: currentShiftId,
+        register_number: a.register_number,
+        register_start_time: a.register_start_time,
+        register_end_time: a.register_end_time
+      }));
 
       fetch('/save-register-assignments/', {
         method: 'POST',
@@ -511,7 +523,16 @@
       .then(r => r.json())
       .then(data => {
         if (data.success) {
-          alert('保存しました');
+          // もしカットログがあれば表示
+          if (data.logs && data.logs.length > 0) {
+            let msg = '一部レジ割当がシフト外にはみ出していたため、自動で調整しました。\n\n';
+            data.logs.forEach(log => {
+              msg += `レジ${log.register_number}: ${log.before.start}〜${log.before.end} → ${log.after.start}〜${log.after.end}\n`;
+            });
+            alert(msg);
+          } else {
+            alert('保存しました');
+          }
           $('#registerModal').modal('hide');
           window.location.reload();
         } else {

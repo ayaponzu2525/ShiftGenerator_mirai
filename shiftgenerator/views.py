@@ -157,73 +157,78 @@ def save_register_assignments(request):
 
         if not assignments:
             return JsonResponse({'success': False, 'error': 'データが空です'})
+        
+        # 全てまとめて読み込み
+        shift_ids = [a['shift_id'] for a in assignments]
+        shift_objs = ShiftPreference.objects.in_bulk(shift_ids)
 
-        # ここで全体まとめて読み込む（事前バリデーション用）
-        shift_objs = ShiftPreference.objects.in_bulk(
-            [a['shift_id'] for a in assignments]
-        )
-
-        # 重複チェック用に、日付＋レジ番号＋時間帯を一旦展開
-        register_slots = []
+        logs = []  # カットログ保存用
 
         for assignment in assignments:
             shift_id = assignment['shift_id']
             register_number = assignment['register_number']
-            start_offset = assignment['start_offset']
-            end_offset = assignment['end_offset']
+            # ここで絶対時間で受け取る
+            register_start_time_str = assignment['register_start_time']
+            register_end_time_str = assignment['register_end_time']
+
+            # 時間型へ
+            register_start_time = datetime.strptime(register_start_time_str, '%H:%M').time()
+            register_end_time = datetime.strptime(register_end_time_str, '%H:%M').time()
 
             shift = shift_objs[shift_id]
 
-            shift_start_dt = datetime.combine(shift.date, shift.confirmed_starttime)
-            reg_start = shift_start_dt + timedelta(minutes=start_offset)
-            reg_end = shift_start_dt + timedelta(minutes=end_offset)
+            # 元データを保存しておく
+            original_start = register_start_time
+            original_end = register_end_time
 
-            register_slots.append({
-                'date': shift.date,
-                'register_number': register_number,
-                'start': reg_start,
-                'end': reg_end
-            })
+            # シフト範囲チェック
+            if register_start_time < shift.confirmed_starttime:
+                register_start_time = shift.confirmed_starttime
+            if register_end_time > shift.confirmed_endtime:
+                register_end_time = shift.confirmed_endtime
 
-        # 重複確認
-        for i in range(len(register_slots)):
-            for j in range(i+1, len(register_slots)):
-                r1 = register_slots[i]
-                r2 = register_slots[j]
-                if (
-                    r1['date'] == r2['date'] and
-                    r1['register_number'] == r2['register_number'] and
-                    not (r1['end'] <= r2['start'] or r2['end'] <= r1['start'])
-                ):
-                    return JsonResponse({
-                        'success': False,
-                        'error': f"レジ{r1['register_number']}が{r1['date']}で重複しています"
-                    })
+            cut_flag = (original_start != register_start_time) or (original_end != register_end_time)
 
-        # 保存処理（ここだけ上書き方式に整理）
-        for shift_id, shift in shift_objs.items():
-            shift.register_assignments.all().delete()
+            # start >= endになってしまった場合はエラー
+            if register_start_time >= register_end_time:
+                logs.append({
+                    'shift_id': shift_id,
+                    'register_number': register_number,
+                    'error': 'レジ時間が不正（シフトに収まらずカットしたら逆転した）'
+                })
+                continue  # このデータは保存しない
 
-        for assignment in assignments:
-            shift_id = assignment['shift_id']
-            register_number = assignment['register_number']
-            start_offset = assignment['start_offset']
-            end_offset = assignment['end_offset']
+            # 既存を一度全削除（同じshift,register_numberで上書きするならfilterで消す）
+            ShiftRegisterAssignment.objects.filter(
+                shift=shift, register_number=register_number
+            ).delete()
 
-            shift = shift_objs[shift_id]
-
+            # 保存
             ShiftRegisterAssignment.objects.create(
                 shift=shift,
                 register_number=register_number,
-                start_offset=start_offset,
-                end_offset=end_offset
+                register_start_time=register_start_time,
+                register_end_time=register_end_time
             )
 
-        return JsonResponse({'success': True})
+            if cut_flag:
+                logs.append({
+                    'shift_id': shift_id,
+                    'register_number': register_number,
+                    'before': {
+                        'start': original_start.strftime('%H:%M'),
+                        'end': original_end.strftime('%H:%M')
+                    },
+                    'after': {
+                        'start': register_start_time.strftime('%H:%M'),
+                        'end': register_end_time.strftime('%H:%M')
+                    },
+                    'message': 'シフト時間外をカットして保存しました'
+                })
 
+        return JsonResponse({'success': True, 'logs': logs})
     except Exception as e:
         return JsonResponse({'success': False, 'error': str(e)})
-
 
 @require_GET
 @user_passes_test(lambda u: u.is_superuser)
@@ -236,8 +241,8 @@ def get_register_assignments(request):
         data = [{
             'id': reg.id,
             'register_number': reg.register_number,
-            'start_offset': reg.start_offset,
-            'end_offset': reg.end_offset,
+            'register_start_time': reg.register_start_time.strftime('%H:%M') if reg.register_start_time else None,
+            'register_end_time': reg.register_end_time.strftime('%H:%M') if reg.register_end_time else None,
         } for reg in assignments]
 
         return JsonResponse({'assignments': data})
@@ -650,9 +655,9 @@ def shift_management(request):
     register_assignments = ShiftRegisterAssignment.objects.all()
     register_data = []
     for reg in register_assignments:
-        shift_start = datetime.combine(reg.shift.date, reg.shift.confirmed_starttime)
-        reg_start = shift_start + timedelta(minutes=reg.start_offset)
-        reg_end = shift_start + timedelta(minutes=reg.end_offset)
+        # reg.register_start_time と reg.register_end_time は TimeField
+        reg_start = datetime.combine(reg.shift.date, reg.register_start_time)
+        reg_end = datetime.combine(reg.shift.date, reg.register_end_time)
 
         register_data.append({
             'id': reg.id,
