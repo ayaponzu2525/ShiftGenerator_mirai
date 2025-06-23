@@ -154,20 +154,33 @@ def save_register_assignments(request):
     try:
         data = json.loads(request.body)
         assignments = data.get('assignments', [])
-
-        if not assignments:
-            return JsonResponse({'success': False, 'error': 'データが空です'})
         
-        # 全てまとめて読み込み
-        shift_ids = [a['shift_id'] for a in assignments]
+        if not assignments:
+            # JSONボディからshift_idを受け取る
+            shift_id = data.get('shift_id')
+            print("assignments空。shift_idで全削除", shift_id)
+            if shift_id:
+                shift = ShiftPreference.objects.filter(id=shift_id).first()
+                if shift:
+                    shift.register_assignments.all().delete()
+            return JsonResponse({'success': True, 'logs': [], 'info': '全削除のみ実施'})
+
+        # --- どの shift_id があるか集める（今回保存対象だけを一括削除用に） ---
+        shift_ids = set(a['shift_id'] for a in assignments)
         shift_objs = ShiftPreference.objects.in_bulk(shift_ids)
 
-        logs = []  # カットログ保存用
+        # --- 既存の割当をshift_idごとに全削除 ---
+        for shift_id in shift_ids:
+            shift = shift_objs.get(shift_id)
+            if shift:
+                shift.register_assignments.all().delete()
 
+        logs = []
+
+        # --- 残すべきものだけ新規作成 ---
         for assignment in assignments:
             shift_id = assignment['shift_id']
             register_number = assignment['register_number']
-            # ここで絶対時間で受け取る
             register_start_time_str = assignment['register_start_time']
             register_end_time_str = assignment['register_end_time']
 
@@ -177,33 +190,26 @@ def save_register_assignments(request):
 
             shift = shift_objs[shift_id]
 
-            # 元データを保存しておく
-            original_start = register_start_time
-            original_end = register_end_time
+            # シフトの確定時間でカット
+            cut_flag = False
+            original_start, original_end = register_start_time, register_end_time
 
-            # シフト範囲チェック
             if register_start_time < shift.confirmed_starttime:
                 register_start_time = shift.confirmed_starttime
+                cut_flag = True
             if register_end_time > shift.confirmed_endtime:
                 register_end_time = shift.confirmed_endtime
+                cut_flag = True
 
-            cut_flag = (original_start != register_start_time) or (original_end != register_end_time)
-
-            # start >= endになってしまった場合はエラー
+            # 不正なデータはスキップ＆ログ
             if register_start_time >= register_end_time:
                 logs.append({
                     'shift_id': shift_id,
                     'register_number': register_number,
                     'error': 'レジ時間が不正（シフトに収まらずカットしたら逆転した）'
                 })
-                continue  # このデータは保存しない
+                continue
 
-            # 既存を一度全削除（同じshift,register_numberで上書きするならfilterで消す）
-            ShiftRegisterAssignment.objects.filter(
-                shift=shift, register_number=register_number
-            ).delete()
-
-            # 保存
             ShiftRegisterAssignment.objects.create(
                 shift=shift,
                 register_number=register_number,
@@ -227,6 +233,7 @@ def save_register_assignments(request):
                 })
 
         return JsonResponse({'success': True, 'logs': logs})
+
     except Exception as e:
         return JsonResponse({'success': False, 'error': str(e)})
 
