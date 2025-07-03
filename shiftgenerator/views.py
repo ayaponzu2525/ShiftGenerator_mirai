@@ -1,5 +1,6 @@
 from django.http import HttpResponse, JsonResponse, HttpResponseServerError
 from django.views.decorators.csrf import csrf_exempt
+from django.db import transaction
 from django.conf import settings
 from django.contrib.auth import login as auth_login, authenticate
 from django.contrib.auth.forms import AuthenticationForm
@@ -91,61 +92,89 @@ def staff_toggle_active(request, staff_id):
 
 
 
+@transaction.atomic  # 途中で失敗したらロールバック
 def save_shifts(request):
-    if request.method == 'POST':
-        data = json.loads(request.body)
-        changes = data.get('changes', [])
+    if request.method != "POST":
+        return JsonResponse({'success': False})
 
-        # デバッグのために `changes` を出力
-        print("Received changes:", changes)
+    data     = json.loads(request.body)
+    changes  = data.get('changes', [])
 
-        # `changes`をリストとしてループ処理
-        for change in changes:
-            action = change['action']
-            item = change['item']
+    for change in changes:
+        action = change['action']
+        item   = change['item']
 
-            # 開始時間と終了時間をISO形式からPythonのdatetimeに変換（UTCからローカルタイムに変換）
-            start_datetime = timezone.make_aware(datetime.fromisoformat(item['start'].replace("Z", "")), pytz.UTC).astimezone(timezone.get_current_timezone())
-            end_datetime = timezone.make_aware(datetime.fromisoformat(item['end'].replace("Z", "")), pytz.UTC).astimezone(timezone.get_current_timezone())
+        # ★ wish- アイテムは完全スキップ（保険）
+        if str(item.get('id', '')).startswith('wish-'):
+            continue
 
-            # 日付部分と時間部分に分ける
-            shift_date = start_datetime.date()  # 日付部分（YYYY-MM-DD）
-            start_time = start_datetime.time()  # 開始時間部分（HH:MM:SS）
-            end_time = end_datetime.time()      # 終了時間部分（HH:MM:SS）
+        # ISO → naive → aware → 現地タイムゾーンへ
+        start_dt = timezone.make_aware(
+            datetime.fromisoformat(item['start'].replace('Z', '')),
+            pytz.UTC
+        ).astimezone(timezone.get_current_timezone())
 
-            if action == 'add':
-                # 日付から曜日を取得
-                day_number = shift_date.weekday()  # 0: 月曜日, 6: 日曜日
+        end_dt   = timezone.make_aware(
+            datetime.fromisoformat(item['end'].replace('Z', '')),
+            pytz.UTC
+        ).astimezone(timezone.get_current_timezone())
 
-                # DayOfWeek インスタンスを取得
-                day_of_week_instance = DayOfWeek.objects.get(day_number=day_number)
+        shift_date  = start_dt.date()
+        start_time  = start_dt.time()
+        end_time    = end_dt.time()
+        new_staff   = item['group']          # ドロップ先のスタッフ ID
 
-                # 新しいシフトをデータベースに追加
-                ShiftPreference.objects.create(
-                    staff_id=item['group'],
-                    date=shift_date,  # 日付を保存
-                    confirmed_starttime=start_time,  # 開始時間を保存
-                    confirmed_endtime=end_time,       # 終了時間を保存
-                    day_of_week=day_of_week_instance   # 曜日を保存
-                )
-            elif action == 'update' or action == 'move':
-                # 既存シフトを更新
-                shift = ShiftPreference.objects.get(id=item['id'])
-                shift.date = shift_date  # 日付を更新
-                shift.confirmed_starttime = start_time  # 開始時間を更新
-                shift.confirmed_endtime = end_time      # 終了時間を更新
-                shift.staff_id = item['group']  # グループを更新
-                shift.save()
-            elif action == 'remove':
-                # シフトの confirmed_starttime と confirmed_endtime を None に更新
-                shift = ShiftPreference.objects.get(id=item['id'])
+        if action == 'add':
+            # --- 新しい確定シフトをまるごと作成 ---
+            day_obj = DayOfWeek.objects.get(day_number=shift_date.weekday())
+            ShiftPreference.objects.create(
+                staff_id            = new_staff,
+                date                = shift_date,
+                confirmed_starttime = start_time,
+                confirmed_endtime   = end_time,
+                day_of_week         = day_obj
+            )
+
+        elif action in ('move', 'update'):
+            shift = ShiftPreference.objects.select_for_update().get(id=item['id'])
+
+            # ===== スタッフが変わった？ =====
+            if shift.staff_id != new_staff:
+                # A) 元レコード → 希望だけ残す
                 shift.confirmed_starttime = None
-                shift.confirmed_endtime = None
+                shift.confirmed_endtime   = None
                 shift.save()
 
-        return JsonResponse({'success': True})
+                # B) 新レコード → 確定だけ入れる
+                day_obj = DayOfWeek.objects.get(day_number=shift_date.weekday())
+                ShiftPreference.objects.create(
+                    staff_id            = new_staff,
+                    date                = shift_date,
+                    confirmed_starttime = start_time,
+                    confirmed_endtime   = end_time,
+                    day_of_week         = day_obj
+                )
+            else:
+                # 同じスタッフ内の時間変更なら confirmed_* だけ更新
+                shift.confirmed_starttime = start_time
+                shift.confirmed_endtime   = end_time
+                shift.save()
 
-    return JsonResponse({'success': False})
+        elif action == 'remove':
+            # confirmed_* を空にして「希望だけ残す」
+            shift = ShiftPreference.objects.select_for_update().get(id=item['id'])
+            shift.confirmed_starttime = None
+            shift.confirmed_endtime   = None
+            shift.save()
+
+    return JsonResponse({'success': True})
+
+def time_overlap(s1, e1, s2, e2):
+    """
+    ２つの時間帯が重複しているか
+    端点（e1 == s2 など）は重複とみなさない
+    """
+    return (e1 > s2) and (e2 > s1)
 
 
 @require_POST
@@ -154,83 +183,91 @@ def save_register_assignments(request):
     try:
         data = json.loads(request.body)
         assignments = data.get('assignments', [])
-        
+        shift_id_in_body = data.get('shift_id')                 # ← 空配列用
+
+        # ---------- ① assignments が空なら、指定 shift_id を全削除 ----------
         if not assignments:
-            # JSONボディからshift_idを受け取る
-            shift_id = data.get('shift_id')
-            print("assignments空。shift_idで全削除", shift_id)
-            if shift_id:
-                shift = ShiftPreference.objects.filter(id=shift_id).first()
-                if shift:
-                    shift.register_assignments.all().delete()
+            if shift_id_in_body:
+                ShiftRegisterAssignment.objects.filter(shift_id=shift_id_in_body).delete()
             return JsonResponse({'success': True, 'logs': [], 'info': '全削除のみ実施'})
 
-        # --- どの shift_id があるか集める（今回保存対象だけを一括削除用に） ---
-        shift_ids = set(a['shift_id'] for a in assignments)
-        shift_objs = ShiftPreference.objects.in_bulk(shift_ids)
+        # ---------- ② 送信内容内での重複チェック ----------
+        for i, a in enumerate(assignments):
+            a_num   = a['register_number']
+            a_start = datetime.strptime(a['register_start_time'], '%H:%M').time()
+            a_end   = datetime.strptime(a['register_end_time'],   '%H:%M').time()
+            for b in assignments[i+1:]:
+                if b['register_number'] != a_num:
+                    continue
+                b_start = datetime.strptime(b['register_start_time'], '%H:%M').time()
+                b_end   = datetime.strptime(b['register_end_time'],   '%H:%M').time()
+                if time_overlap(a_start, a_end, b_start, b_end):
+                    msg = f'レジ{a_num} が {a_start.strftime("%H:%M")}〜{a_end.strftime("%H:%M")} と '\
+                          f'{b_start.strftime("%H:%M")}〜{b_end.strftime("%H:%M")} で重複しています'
+                    return JsonResponse({'success': False, 'error': msg})
 
-        # --- 既存の割当をshift_idごとに全削除 ---
-        for shift_id in shift_ids:
-            shift = shift_objs.get(shift_id)
-            if shift:
-                shift.register_assignments.all().delete()
+        # ---------- ③ 既存 DB との重複チェック ----------
+        # まず今回更新対象の shift をまとめて取得
+        shift_ids = {a['shift_id'] for a in assignments}
+        shift_map = ShiftPreference.objects.in_bulk(shift_ids)
+
+        for a in assignments:
+            shift_id        = a['shift_id']
+            register_number = a['register_number']
+            new_start = datetime.strptime(a['register_start_time'], '%H:%M').time()
+            new_end   = datetime.strptime(a['register_end_time'],   '%H:%M').time()
+            shift_obj = shift_map[shift_id]
+
+            # 同じ日・同じレジ番号の割当で、自分の shift 以外のもの
+            overlaps = (
+                ShiftRegisterAssignment.objects
+                .filter(
+                    shift__date=shift_obj.date,
+                    register_number=register_number
+                )
+                .exclude(shift_id=shift_id)        # 自分自身は除外
+            )
+            for o in overlaps:
+                o_start = o.register_start_time
+                o_end   = o.register_end_time
+                if time_overlap(new_start, new_end, o_start, o_end):
+                    msg = (
+                        f'{shift_obj.date} のレジ{register_number} は '
+                        f'既に他スタッフ({o.shift.staff.name})で '
+                        f'{o_start.strftime("%H:%M")}〜{o_end.strftime("%H:%M")} が割当済みです'
+                    )
+                    return JsonResponse({'success': False, 'error': msg})
+
+        # ---------- ④ ここから先は登録処理（以前と同じ） ----------
+        # 古い割当を削除 → 新データを作成
+        for sid in shift_ids:
+            ShiftRegisterAssignment.objects.filter(shift_id=sid).delete()
 
         logs = []
+        for a in assignments:
+            shift     = shift_map[a['shift_id']]
+            reg_no    = a['register_number']
+            s_time    = datetime.strptime(a['register_start_time'], '%H:%M').time()
+            e_time    = datetime.strptime(a['register_end_time'],   '%H:%M').time()
 
-        # --- 残すべきものだけ新規作成 ---
-        for assignment in assignments:
-            shift_id = assignment['shift_id']
-            register_number = assignment['register_number']
-            register_start_time_str = assignment['register_start_time']
-            register_end_time_str = assignment['register_end_time']
-
-            # 時間型へ
-            register_start_time = datetime.strptime(register_start_time_str, '%H:%M').time()
-            register_end_time = datetime.strptime(register_end_time_str, '%H:%M').time()
-
-            shift = shift_objs[shift_id]
-
-            # シフトの確定時間でカット
-            cut_flag = False
-            original_start, original_end = register_start_time, register_end_time
-
-            if register_start_time < shift.confirmed_starttime:
-                register_start_time = shift.confirmed_starttime
-                cut_flag = True
-            if register_end_time > shift.confirmed_endtime:
-                register_end_time = shift.confirmed_endtime
-                cut_flag = True
-
-            # 不正なデータはスキップ＆ログ
-            if register_start_time >= register_end_time:
-                logs.append({
-                    'shift_id': shift_id,
-                    'register_number': register_number,
-                    'error': 'レジ時間が不正（シフトに収まらずカットしたら逆転した）'
-                })
-                continue
+            # シフト枠外ならカット（省略可・これまで通り）
+            cut = False
+            if s_time < shift.confirmed_starttime:
+                s_time, cut = shift.confirmed_starttime, True
+            if e_time > shift.confirmed_endtime:
+                e_time, cut = shift.confirmed_endtime, True
+            if s_time >= e_time:
+                continue    # 逆転はスキップ
 
             ShiftRegisterAssignment.objects.create(
                 shift=shift,
-                register_number=register_number,
-                register_start_time=register_start_time,
-                register_end_time=register_end_time
+                register_number=reg_no,
+                register_start_time=s_time,
+                register_end_time=e_time
             )
-
-            if cut_flag:
-                logs.append({
-                    'shift_id': shift_id,
-                    'register_number': register_number,
-                    'before': {
-                        'start': original_start.strftime('%H:%M'),
-                        'end': original_end.strftime('%H:%M')
-                    },
-                    'after': {
-                        'start': register_start_time.strftime('%H:%M'),
-                        'end': register_end_time.strftime('%H:%M')
-                    },
-                    'message': 'シフト時間外をカットして保存しました'
-                })
+            if cut:
+                logs.append({'shift_id': shift.id, 'register_number': reg_no,
+                             'message': 'シフト外をカットして保存'})
 
         return JsonResponse({'success': True, 'logs': logs})
 

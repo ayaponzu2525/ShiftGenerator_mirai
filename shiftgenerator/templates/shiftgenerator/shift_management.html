@@ -285,7 +285,9 @@
           group: {{ p.staff.id }},
           type: 'background',
           className: 'wish-item',
-          title: '希望: {{ p.starttime|time:"H:i" }}-{{ p.endtime|time:"H:i" }}'
+          title: '希望: {{ p.starttime|time:"H:i" }}-{{ p.endtime|time:"H:i" }}',
+          editable: false,      // ドラッグ & リサイズを完全禁止
+          selectable: false    // クリック選択もさせない
         },
       {% endfor %}
     ];
@@ -303,6 +305,13 @@
     let changes = [];  // 配列で管理
 
     function onTaskBarChanged(action, item) {
+
+        // ★ 「wish-」はすべて無視
+        if (String(item.id).startsWith('wish-')) {
+            console.log('skip wish item:', item.id);
+            return;   // 何も記録しない
+        }
+
         // id は null にする
         const id = item.id;
 
@@ -384,11 +393,21 @@
           callback(null);  // 完全に何もしない
         },
         onMove: function (item, callback) {
+            // ★ wish-アイテムならドラッグ自体を無効化
+            if (String(item.id).startsWith('wish-')) {
+                callback(null);      // タイムライン上でも元に戻す
+                return;
+            }
             console.log('Item moved:', item);
             onTaskBarChanged('move', item);
             callback(item);
         },
         onRemove: function (item, callback) {
+            // ★ wish-アイテムならドラッグ自体を無効化
+            if (String(item.id).startsWith('wish-')) {
+                callback(null);      // タイムライン上でも元に戻す
+                return;
+            }
             var confirmDelete = confirm('Are you sure you want to delete this item?');
             if (confirmDelete) {
                 onTaskBarChanged('remove', item);
@@ -805,33 +824,38 @@ document.getElementById('saveChangesBtn').addEventListener('click', function() {
   }
 
 
-function save_shifts(){
-  // 変更がない場合は何もしない
-  if (changes.length === 0) {
-      alert('変更はありません。');
-      return;
+function save_shifts() {
+
+  // 「確定シフト」だけ抽出
+  const filteredChanges = changes.filter(c =>
+    !String(c.item.id).startsWith('wish-')
+  );
+
+  if (filteredChanges.length === 0) {
+    alert('変更はありません。（確定シフトが動いていません）');
+    return;
   }
 
-  // 変更をサーバーに送信
   fetch('{% url "shiftgenerator:save-shifts" %}', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-CSRFToken': '{{ csrf_token }}'
     },
-    body: JSON.stringify({ changes: changes })
+    body: JSON.stringify({ changes: filteredChanges })
   })
-  .then(response => response.json())
+  .then(resp => resp.json())
   .then(data => {
     if (data.success) {
       alert('変更が保存されました！');
-      changes = []; //更新履歴をリセット
-      window.location.reload(); // 保存後にリロードして反映
+      changes = [];          // ログをクリア
+      window.location.reload();
     } else {
       alert('保存に失敗しました。');
     }
   });
 }
+
 
 
     // 次の半月の開始日・終了日を返す関数
