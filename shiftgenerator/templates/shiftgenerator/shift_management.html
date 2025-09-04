@@ -123,7 +123,7 @@
         <input type="date" id="startDate" class="form-control mr-2" style="min-width:130px;max-width:170px;">
         <span class="mx-2">〜</span>
         <input type="date" id="endDate" class="form-control mr-2" style="min-width:130px;max-width:170px;">
-        <button id="copyShiftsBtn" class="btn btn-success">📋 シフト希望から再反映</button>
+        <button id="copyShiftsBtn" class="btn btn-success">📋 シフト希望を反映</button>
         <button id="saveChangesBtn" class="btn btn-primary mr-2">💾 変更を保存</button>
         
       </div>
@@ -439,36 +439,50 @@
     let currentShiftId = null;
     let registerAssignments = [];  // 一時保存
 
-    // アイテムクリック時に呼び出し
-    timeline.on('select', function (props) {
-      const itemId = props.items[0];
-      if (!itemId) return;
+    // 共通：指定アイテムでレジ編集モーダルを開く（確定シフトのみ）
+    function openRegisterForItem(itemId) {
+      // 背景（wish-）やレジ帯（reg-）は対象外
+      const idStr = String(itemId);
+      if (idStr.startsWith('wish-') || idStr.startsWith('reg-')) return;
 
       currentShiftId = itemId;
       const shiftItem = items.get(itemId);
+      if (!shiftItem) return;
 
-      // 確定シフト情報を表示
+      // 対象シフト情報を表示
       const startTime = new Date(shiftItem.start).toLocaleTimeString('ja-JP', {hour:'2-digit', minute:'2-digit'});
-      const endTime = new Date(shiftItem.end).toLocaleTimeString('ja-JP', {hour:'2-digit', minute:'2-digit'});
-      $('#registerShiftInfo').text(`${startTime} 〜 ${endTime}`);
+      const endTime   = new Date(shiftItem.end).toLocaleTimeString('ja-JP', {hour:'2-digit', minute:'2-digit'});
+      // スタッフ名も表示（groups データセットの name を使用）
+      const staffName = (groups.get && groups.get(shiftItem.group)?.name) || '';
+      $('#registerShiftInfo').text(`${staffName ? staffName + '｜' : ''}${startTime} 〜 ${endTime}`);
 
-      // 既存割当を読み込み
-      fetch(`/get-register-assignments/?shift_id=${itemId}`, {
-        method: 'GET',
-        credentials: 'same-origin'
-      })
+      // 既存割当を読み込み → 描画 → モーダル表示
+      fetch(`/get-register-assignments/?shift_id=${itemId}`, { method: 'GET', credentials: 'same-origin' })
         .then(res => res.json())
         .then(data => {
           registerAssignments = data.assignments.map(a => ({
-            id: a.id, // 既存DB ID（新規はnull）
+            id: a.id,
             register_number: a.register_number,
-            register_start_time: a.register_start_time, // "09:30"
-            register_end_time: a.register_end_time      // "12:00"
+            register_start_time: a.register_start_time,
+            register_end_time: a.register_end_time
           }));
           renderRegisterList();
           $('#registerModal').modal('show');
         });
+    }
 
+    // 単クリック：選択だけ（誤操作で開かない）
+    timeline.on('click', function (props) {
+      if (!props.item) return;
+      timeline.setSelection(props.item);
+    });
+
+    // 右クリック：即モーダル（アイテム上のみ）
+    timeline.on('contextmenu', function (props) {
+      if (!props.item) return;           // アイテム上以外は無視（標準の右クリックメニューはそのまま）
+      props.event.preventDefault();      // ブラウザの標準メニューを抑制
+      timeline.setSelection(props.item); // 視覚的選択
+      openRegisterForItem(props.item);   // そのままモーダルへ
     });
 
     // 割当リスト描画
@@ -501,6 +515,7 @@
         list.append(row);
       });
     }
+
     // 新規割当追加ボタン
     $('#addRegisterBtn').click(() => {
       // デフォルト値は、シフトの開始〜終了
@@ -934,8 +949,6 @@ function save_shifts() {
   });
 
     /* ===== 要素取得 ===== */
-    // const startInput = document.getElementById('startDate');   // すでに宣言
-    // const endInput   = document.getElementById('endDate');     // すでに宣言
     const modal      = document.getElementById('staffModal');
     const modalTitle = document.getElementById('staffModalTitle');
     const modalStart = document.getElementById('modalStart');
@@ -1030,10 +1043,7 @@ function save_shifts() {
     });
 
 
-    // タイムラインのクリックイベントを追加（オプション）
-    timeline.on('click', function (properties) {
-      console.log('Clicked on:', properties);
-    });
+
   </script>
 </body>
 </html>
