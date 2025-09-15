@@ -461,7 +461,11 @@ def shift_management_view(request):
         label = request.POST.get("label", "")
         start_time = parse_time(request.POST.get("start_time"))
         end_time = parse_time(request.POST.get("end_time"))
-        auto_close_date = parse_datetime(request.POST.get("auto_close_date") or None)
+        # auto_close_date は GET/POST 両方から受け、値がある時だけ parse
+        auto_close_str = request.POST.get("auto_close_date") or request.GET.get("auto_close_date") or ""
+        auto_close_date = parse_datetime(auto_close_str) if auto_close_str else None
+        if auto_close_date is not None and timezone.is_naive(auto_close_date):
+            auto_close_date = timezone.make_aware(auto_close_date, timezone.get_current_timezone())
         
         if type_ == "HELP":
             label = make_help_label(start_date, start_time, end_time)
@@ -469,6 +473,19 @@ def shift_management_view(request):
         if has_duplicate_period(type_, start_date, end_date, start_time, end_time):
             messages.error(request, "重複している募集期間がすでに存在します。")
             return redirect("shiftgenerator:shift-management-view")
+        
+        if not start_date or not end_date:
+            messages.error(request, "開始日と終了日は必須です。")
+            return redirect("shiftgenerator:shift-management-view")
+        if end_date < start_date:
+            messages.error(request, "終了日は開始日以降を指定してください。")
+            return redirect("shiftgenerator:shift-management-view")
+
+        # 時刻が設定されているモードだけ比較（どちらか未入力ならスキップ）
+        if start_time and end_time and end_time <= start_time:
+            messages.error(request, "終了時刻は開始時刻より後にしてください。")
+            return redirect("shiftgenerator:shift-management-view")
+
 
         ShiftSubmissionPeriod.objects.create(
             label=label,
@@ -709,6 +726,7 @@ def shift_management(request):
             'content': f'レジ{reg.register_number}',
             'start': reg_start.isoformat(),
             'end': reg_end.isoformat(),
+            'className': f'register-item reg{reg.register_number}',
         })
         
     context = {
@@ -718,6 +736,7 @@ def shift_management(request):
         'date': target_date.isoformat(),
         'selected_date': target_date,
         'register_assignments': register_data,
+        'className': f'register-item reg{reg.register_number}',
     }
     return render(request, 'shiftgenerator/shift_management.html', context)
 

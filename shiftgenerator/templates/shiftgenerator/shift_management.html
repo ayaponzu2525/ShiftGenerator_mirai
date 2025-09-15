@@ -97,6 +97,12 @@
     border-radius: 4px;
     margin-top: 15px !important; /* シフトバーに被らないよう少し下げる */
   }
+
+  /* レジごとに色分け */
+  .reg1 { background-color: rgba(255, 251, 33, 0.7); }   /* 赤 */
+  .reg2 { background-color: rgba(239, 120, 2, 0.7); }  /* 青 */
+  .reg3 { background-color: rgba(22, 221, 52, 0.7); }  /* 緑 */
+  .reg4 { background-color: rgba(231, 85, 204, 0.7); }  /* 黄 */
   </style>
 </head>
 <body class="bg-light">
@@ -243,7 +249,7 @@
         {% for preference in preferences %}
         {
             id: {{ preference.id }},
-            content: 'Shift {{ preference.id }}',
+            content: '{{ preference.confirmed_starttime|time:"H:i" }}-{{ preference.confirmed_endtime|time:"H:i" }}',
             start: '{{ preference.confirmed_starttime|date:"Y-m-d\\TH:i:s" }}',
             end: '{{ preference.confirmed_endtime|date:"Y-m-d\\TH:i:s" }}',
             group: {{ preference.staff.id }}
@@ -262,7 +268,7 @@
           end: '{{ reg.end }}',
           type: 'range',
           editable: false,
-          className: 'register-item'
+          className: '{{ reg.className|escapejs }}'
         },
       {% endfor %}
     ];
@@ -385,9 +391,11 @@
         },
         // onAdd
         onAdd: function (item, callback) {
-        console.log('Item to be added:', item);
+        // 追加直後にラベルを「HH:mm-HH:mm」に更新（表示だけ）
+        relabelIfShift(item);
         onTaskBarChanged('add', item);
         callback(item);
+        scheduleRefreshSummary(); // ← 追加後すぐ集計を更新
         },
         onUpdate: function (item, callback) {
           callback(null);  // 完全に何もしない
@@ -399,8 +407,11 @@
                 return;
             }
             console.log('Item moved:', item);
+            // 移動後、表示ラベルだけ即更新（DB保存は別ボタン）
+            relabelIfShift(item);
             onTaskBarChanged('move', item);
             callback(item);
+            scheduleRefreshSummary(); // ← 追加後すぐ集計を更新
         },
         onRemove: function (item, callback) {
             // ★ wish-アイテムならドラッグ自体を無効化
@@ -412,6 +423,7 @@
             if (confirmDelete) {
                 onTaskBarChanged('remove', item);
                 callback(item);
+                scheduleRefreshSummary(); // ← 追加後すぐ集計を更新
             } else {
                 callback(null);
             }
@@ -432,9 +444,33 @@
           }
     };
     
+
+    // 表示ラベル更新ユーティリティ
+    function fmtHHMM(d) {
+      const dt = (d instanceof Date) ? d : new Date(d);
+      const hh = String(dt.getHours()).padStart(2,'0');
+      const mm = String(dt.getMinutes()).padStart(2,'0');
+      return `${hh}:${mm}`;
+    }
+    function relabelIfShift(item) {
+      const id = String(item.id || '');
+      if (id.startsWith('wish-') || id.startsWith('reg-')) return;
+      item.content = `${fmtHHMM(item.start)}-${fmtHHMM(item.end)}`;
+      items.update(item); // 画面上の表示だけ更新
+      // 表示テキスト更新も「変更」とみなして集計を更新（軽いのでOK）
+      scheduleRefreshSummary();
+    }
     // メインのタイムライン
     var container = document.getElementById('timeline');
     var timeline = new vis.Timeline(container, items, groups, options);
+
+    // タイムラインの範囲が確定した後（ズーム完了など）
+    timeline.on('rangechanged', () => scheduleRefreshSummary());
+
+    // DataSet の変更を監視（add/update/remove）
+    items.on('add',    () => scheduleRefreshSummary());
+    items.on('update', () => scheduleRefreshSummary());
+    items.on('remove', () => scheduleRefreshSummary());
 
     let currentShiftId = null;
     let registerAssignments = [];  // 一時保存
@@ -704,20 +740,28 @@
     return slots;
   };
 
-  function calculateStaffCounts(slots) {
+  // 「確定シフト」だけを true にする判定
+  function isConfirmedShiftItem(item) {
+    const id = String(item.id || '');
+    if (id.startsWith('reg-')) return false;                 // レジ帯（register-item）
+    if (id.startsWith('wish-')) return false;                // 希望背景
+    if (item.type === 'background') return false;            // 念のため
+    if (item.className && String(item.className).includes('register-item')) return false;
+    return true; // それ以外＝確定シフト
+  }
+
+  function calculateStaffCounts(slots, baseItems) {
+    const confirmed = (baseItems || items.get()).filter(isConfirmedShiftItem);
     return slots.map(slot => {
-      const count = items.get().filter(item => {
+      const count = confirmed.filter(item => {
         const itemStart = new Date(item.start);
         const itemEnd = new Date(item.end);
         return itemEnd > slot.start && itemStart < slot.end;
       }).length;
-
-      return {
-        label: `${slot.start.getHours()}:00〜${slot.end.getHours()}:00`,
-        count: count
-      };
+      return { label: `${slot.start.getHours()}:00〜${slot.end.getHours()}:00`, count };
     });
   };
+
 
   function renderSummary(counts) {
     const headerRow = document.getElementById('summaryHeaderRow');
@@ -726,11 +770,9 @@
     headerRow.innerHTML = '';
     dataRow.innerHTML = '';
 
-    // 合計スタッフ人数（ユニークな staff ID）
-    const allStaffIds = new Set();
-    items.get().forEach(item => {
-      allStaffIds.add(item.group);  // group はスタッフID
-    });
+    // 合計スタッフ人数（確定シフトのみのユニーク staff ID）
+    const confirmedOnly = items.get().filter(isConfirmedShiftItem);
+    const allStaffIds = new Set(confirmedOnly.map(i => i.group));
     const totalStaffCount = allStaffIds.size;
 
     // ✅ ヘッダー左端セル → 「合計人数」
@@ -759,11 +801,28 @@
     });
   };
 
-  // 初回表示用（初期化後すぐに）
-  const range = timeline.getWindow();
-  const slots = generateHourlySlots(range.start, range.end);
-  const counts = calculateStaffCounts(slots);
-  renderSummary(counts);
+  // 集計を現在の表示範囲＆最新itemsで再計算して描画
+  function refreshSummary() {
+    const range = timeline.getWindow();
+    const slots = generateHourlySlots(range.start, range.end);
+    const counts = calculateStaffCounts(slots, items.get());
+    renderSummary(counts);
+  }
+
+  // 軽量なデバウンス（多重更新を間引く）
+  let _sumTimer = null;
+  function scheduleRefreshSummary() {
+    if (_sumTimer) clearTimeout(_sumTimer);
+    _sumTimer = setTimeout(() => {
+      _sumTimer = null;
+      refreshSummary();
+    }, 40);
+  }
+
+
+  // 初回表示用
+  items.get().forEach(it => relabelIfShift(it));
+  refreshSummary();
 
 
 // ホイールイベントハンドラ
