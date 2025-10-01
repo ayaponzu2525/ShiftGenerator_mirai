@@ -99,7 +99,36 @@ def save_shifts(request):
 
     data     = json.loads(request.body)
     changes  = data.get('changes', [])
+    
+    # --- フェーズ分割 ---
+    shift_phase = []  # add/move/update/remove（シフト）
+    reg_phase   = []  # update_reg/remove_reg（レジ）
+    for ch in changes:
+        if ch['action'] in ('update_reg', 'remove_reg'):
+            reg_phase.append(ch)
+        else:
+            shift_phase.append(ch)
+    
+    
+    def parse_time_flex_to_local_time(s):
+        """ISO(…Z/±hh:mm) or HH:MM[:SS] を「ローカル時刻」の time に揃える"""
+        if not s:
+            return None
+        s = str(s)
+        try:
+            # ISO → aware → ローカルTZへ → time
+            dt = datetime.fromisoformat(s.replace('Z', '+00:00'))
+            if dt.tzinfo is None:
+                # 明示TZ無いISOならローカルTZとして扱う
+                dt = timezone.make_aware(dt, timezone.get_current_timezone())
+            else:
+                dt = dt.astimezone(timezone.get_current_timezone())
+            return dt.time()
+        except Exception:
+            t = parse_time(s)  # "HH:MM" or "HH:MM:SS"
+            return t
 
+    # === 1) 先にシフトを保存 ===
     for change in changes:
         action = change['action']
         item   = change['item']
@@ -166,6 +195,32 @@ def save_shifts(request):
             shift.confirmed_starttime = None
             shift.confirmed_endtime   = None
             shift.save()
+            
+    # === 2) 次にレジを保存（ローカル時刻に正規化） ===
+    for change in reg_phase:
+        action = change['action']
+        item   = change['item']
+
+        if action == 'update_reg':
+            reg_pk = str(item.get('id')).replace('reg-','')
+            reg = ShiftRegisterAssignment.objects.select_for_update().get(pk=reg_pk)
+
+            start_t = parse_time_flex_to_local_time(item.get('start') or item.get('register_start_time'))
+            end_t   = parse_time_flex_to_local_time(item.get('end')   or item.get('register_end_time'))
+            if start_t is None or end_t is None:
+                return JsonResponse({'success': False, 'error': f'invalid time: {item.get("start")}, {item.get("end")}'}, status=400)
+
+            reg.register_start_time = start_t
+            reg.register_end_time   = end_t
+            if item.get('shift_id'):        reg.shift_id = int(item['shift_id'])
+            if item.get('register_number') is not None:
+                reg.register_number = int(item['register_number'])
+            reg.save()
+
+        elif action == 'remove_reg':
+            reg_pk = str(item.get('id')).replace('reg-','')
+            ShiftRegisterAssignment.objects.filter(pk=reg_pk).delete()
+
 
     return JsonResponse({'success': True})
 
@@ -190,42 +245,90 @@ def save_register_assignments(request):
             if shift_id_in_body:
                 ShiftRegisterAssignment.objects.filter(shift_id=shift_id_in_body).delete()
             return JsonResponse({'success': True, 'logs': [], 'info': '全削除のみ実施'})
-
-        # ---------- ② 送信内容内での重複チェック ----------
-        for i, a in enumerate(assignments):
-            a_num   = a['register_number']
-            a_start = datetime.strptime(a['register_start_time'], '%H:%M').time()
-            a_end   = datetime.strptime(a['register_end_time'],   '%H:%M').time()
-            for b in assignments[i+1:]:
-                if b['register_number'] != a_num:
-                    continue
-                b_start = datetime.strptime(b['register_start_time'], '%H:%M').time()
-                b_end   = datetime.strptime(b['register_end_time'],   '%H:%M').time()
-                if time_overlap(a_start, a_end, b_start, b_end):
-                    msg = f'レジ{a_num} が {a_start.strftime("%H:%M")}〜{a_end.strftime("%H:%M")} と '\
-                          f'{b_start.strftime("%H:%M")}〜{b_end.strftime("%H:%M")} で重複しています'
-                    return JsonResponse({'success': False, 'error': msg})
-
-        # ---------- ③ 既存 DB との重複チェック ----------
-        # まず今回更新対象の shift をまとめて取得
+        
+        
+        # ======== STEP 0: 正規化（シフト境界でクランプ → 完全非重複は除外 or 400）========
+        # 0-1) 今回触る shift をまとめて取得（この後ずっと使う）
         shift_ids = {a['shift_id'] for a in assignments}
         shift_map = ShiftPreference.objects.in_bulk(shift_ids)
 
+        norm = []     # 正規化後のレコード（この後は assignments の代わりにコレだけを使う）
+        logs = []     # 既存ログをここで使いまわす（最後に返す）
+        
         for a in assignments:
+            shift_id = a['shift_id']
+            shift = shift_map[shift_id]
+
+            # 文字列→time
+            s_time = datetime.strptime(a['register_start_time'], '%H:%M').time()
+            e_time = datetime.strptime(a['register_end_time'],   '%H:%M').time()
+
+            # シフト枠でクランプ（同日time同士の比較なのでそのままOK）
+            cut = False
+            if s_time < shift.confirmed_starttime:
+                s_time, cut = shift.confirmed_starttime, True
+            if e_time > shift.confirmed_endtime:
+                e_time, cut = shift.confirmed_endtime, True
+
+            # 幅が無い/逆転 → 完全非重複なのでスキップ（要件次第で 400 にしてもOK）
+            if s_time >= e_time:
+                # スキップ理由をログしたい場合はここで logs.append してもよい
+                continue
+
+            if cut:
+                logs.append({
+                    'shift_id': shift.id,
+                    'register_number': a['register_number'],
+                    'message': 'シフト外をカットして保存（サーバ側）'
+                })
+
+            norm.append({
+                'shift_id': shift_id,
+                'register_number': a['register_number'],
+                'register_start_time': s_time,  # ここは time 型
+                'register_end_time':   e_time,  # ここも time 型
+            })
+
+        # 正規化の結果、保存対象が消えた場合は古い割当を削除して終了
+        if not norm:
+            for sid in shift_ids:
+                ShiftRegisterAssignment.objects.filter(shift_id=sid).delete()
+            return JsonResponse({'success': True, 'logs': logs, 'info': '正規化後に保存対象なし（全削除）'})
+
+
+       # ---------- ② 送信内容内での重複チェック（正規化後の norm を使用） ----------
+        for i, a in enumerate(norm):
+            a_num   = a['register_number']
+            a_start = a['register_start_time']
+            a_end   = a['register_end_time']
+            for b in norm[i+1:]:
+                if b['register_number'] != a_num:
+                    continue
+                b_start = b['register_start_time']
+                b_end   = b['register_end_time']
+                if time_overlap(a_start, a_end, b_start, b_end):
+                    msg = (
+                        f'レジ{a_num} が {a_start.strftime("%H:%M")}〜{a_end.strftime("%H:%M")} と '
+                        f'{b_start.strftime("%H:%M")}〜{b_end.strftime("%H:%M")} で重複しています'
+                    )
+                    return JsonResponse({'success': False, 'error': msg})
+
+        # ---------- ③ 既存 DB との重複チェック（正規化後の norm を使用） ----------
+        # shift_map は STEP 0 で取得済み
+        for a in norm:
             shift_id        = a['shift_id']
             register_number = a['register_number']
-            new_start = datetime.strptime(a['register_start_time'], '%H:%M').time()
-            new_end   = datetime.strptime(a['register_end_time'],   '%H:%M').time()
+            new_start = a['register_start_time']
+            new_end   = a['register_end_time']
             shift_obj = shift_map[shift_id]
 
-            # 同じ日・同じレジ番号の割当で、自分の shift 以外のもの
             overlaps = (
                 ShiftRegisterAssignment.objects
                 .filter(
                     shift__date=shift_obj.date,
                     register_number=register_number
                 )
-                .exclude(shift_id=shift_id)        # 自分自身は除外
+                .exclude(shift_id=shift_id)  # 自分自身は除外
             )
             for o in overlaps:
                 o_start = o.register_start_time
@@ -238,36 +341,23 @@ def save_register_assignments(request):
                     )
                     return JsonResponse({'success': False, 'error': msg})
 
-        # ---------- ④ ここから先は登録処理（以前と同じ） ----------
-        # 古い割当を削除 → 新データを作成
+        # ---------- ④ 登録処理（正規化後の norm を保存） ----------
         for sid in shift_ids:
             ShiftRegisterAssignment.objects.filter(shift_id=sid).delete()
 
-        logs = []
-        for a in assignments:
-            shift     = shift_map[a['shift_id']]
-            reg_no    = a['register_number']
-            s_time    = datetime.strptime(a['register_start_time'], '%H:%M').time()
-            e_time    = datetime.strptime(a['register_end_time'],   '%H:%M').time()
+        for a in norm:
+            shift  = shift_map[a['shift_id']]
+            reg_no = a['register_number']
+            s_time = a['register_start_time']
+            e_time = a['register_end_time']
 
-            # シフト枠外ならカット（省略可・これまで通り）
-            cut = False
-            if s_time < shift.confirmed_starttime:
-                s_time, cut = shift.confirmed_starttime, True
-            if e_time > shift.confirmed_endtime:
-                e_time, cut = shift.confirmed_endtime, True
-            if s_time >= e_time:
-                continue    # 逆転はスキップ
-
+            # ここでのカットは既に STEP 0 済みなので不要
             ShiftRegisterAssignment.objects.create(
                 shift=shift,
                 register_number=reg_no,
                 register_start_time=s_time,
                 register_end_time=e_time
             )
-            if cut:
-                logs.append({'shift_id': shift.id, 'register_number': reg_no,
-                             'message': 'シフト外をカットして保存'})
 
         return JsonResponse({'success': True, 'logs': logs})
 
@@ -722,11 +812,13 @@ def shift_management(request):
 
         register_data.append({
             'id': reg.id,
+            'shift_id': reg.shift.id,
             'group': reg.shift.staff.id,
             'content': f'レジ{reg.register_number}',
             'start': reg_start.isoformat(),
             'end': reg_end.isoformat(),
             'className': f'register-item reg{reg.register_number}',
+            'register_number': reg.register_number, 
         })
         
     context = {
@@ -736,7 +828,6 @@ def shift_management(request):
         'date': target_date.isoformat(),
         'selected_date': target_date,
         'register_assignments': register_data,
-        'className': f'register-item reg{reg.register_number}',
     }
     return render(request, 'shiftgenerator/shift_management.html', context)
 
