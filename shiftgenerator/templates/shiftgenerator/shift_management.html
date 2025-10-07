@@ -243,7 +243,6 @@
     ]);
 
 
-
     // アイテムデータ（シフト）
     const items = new vis.DataSet([
         {% for preference in preferences %}
@@ -766,6 +765,8 @@
     // レジの時間をシフト境界でクランプ
     function clampRegisterToShift(a, shiftStart, shiftEnd, selectedDate, warnings) {
       const rs = new Date(`${selectedDate}T${a.register_start_time}:00`);
+
+    
       const re = new Date(`${selectedDate}T${a.register_end_time}:00`);
 
       if (isNaN(rs) || isNaN(re)) {
@@ -795,6 +796,30 @@
     }
 
 
+
+    function detectRegisterOverlaps(assignments, selectedDate) {
+      const conflicts = [];
+      for (let i = 0; i < assignments.length; i++) {
+        const a = assignments[i];
+        const aStart = toDate(selectedDate, a.register_start_time);
+        const aEnd = toDate(selectedDate, a.register_end_time);
+        if (!aStart || !aEnd || isNaN(+aStart) || isNaN(+aEnd)) continue;
+        for (let j = i + 1; j < assignments.length; j++) {
+          const b = assignments[j];
+          const bStart = toDate(selectedDate, b.register_start_time);
+          const bEnd = toDate(selectedDate, b.register_end_time);
+          if (!bStart || !bEnd || isNaN(+bStart) || isNaN(+bEnd)) continue;
+          if (aEnd > bStart && bEnd > aStart) {
+            conflicts.push({
+              a,
+              b,
+              message: `レジ${a.register_number} ${a.register_start_time}〜${a.register_end_time} と レジ${b.register_number} ${b.register_start_time}〜${b.register_end_time}`
+            });
+          }
+        }
+      }
+      return conflicts;
+    }
 
     // シフトID単位でレジ帯を入れ替える
     function refreshRegisterItemsForShift(shiftId){
@@ -883,7 +908,16 @@
     // 単一シフトのレジを「UI準拠」で保存（置き換え）
     function flushRegistersForShift(shiftId){
       const assignments = buildAssignmentsFromUI(shiftId);
-      const payload = { shift_id: shiftId, assignments };
+      const { start: shiftStart, end: shiftEnd } = getShiftBoundary(shiftId);
+      const payload = {
+        shift_id: shiftId,
+        assignments,
+        shift_window: {
+          shift_id: shiftId,
+          start: fmtHHMM(shiftStart),
+          end: fmtHHMM(shiftEnd)
+        }
+      };
       return fetch("{% url 'shiftgenerator:save-register-assignments' %}", {
         method: "POST",
         headers: {
@@ -895,11 +929,17 @@
       })
       .then(r => r.json())
       .then(data => {
-        if (!data.success) throw new Error(data.error || 'レジ保存に失敗');
-        return refreshRegisterItemsForShift(shiftId); // 画面も最新DB値に置き換え
+        if (!data.success) throw new Error(data.error || 'レジ保存に失敗しました');
+        return refreshRegisterItemsForShift(shiftId); // ��ʂ��ŐVDB�l�ɒu������
       });
     }
-    // 保存処理
+    // 保存ボタン
+    function showRegisterSaveError(err) {
+      const detail = err && err.message ? `: ${err.message}` : '。サーバーのログを確認してください。';
+      alert(`保存に失敗しました${detail}`);
+      console.error(err);
+    }
+
     $('#saveRegisterBtn').click(() => {
       // 1) 入力を registerAssignments に取り込む
       $('#registerList .input-group').each(function(i) {
@@ -910,50 +950,65 @@
 
       // 2) シフト境界
       const { start: shiftStart, end: shiftEnd } = getShiftBoundary(currentShiftId);
+      const shiftWindow = {
+        shift_id: currentShiftId,
+        start: fmtHHMM(shiftStart),
+        end: fmtHHMM(shiftEnd)
+      };
       const warnings = new Set();
       const adjusted = [];
 
-      // 3) 全レジをクランプ（ここが“単一の真実の源泉”）
+      // 3) 全レジをクランプ
       for (const a of registerAssignments) {
         const c = clampRegisterToShift(a, shiftStart, shiftEnd, selectedDate, warnings);
         adjusted.push(c);
       }
 
-      // 4) ハードエラー→**ブロックしない**。送信対象から**除外**して続行。
+      // 4) 無効は除外
       const invalids = adjusted.filter(a => a.__invalid);
       const valids   = adjusted.filter(a => !a.__invalid);
 
-       // 送るものが1件もない時だけ終了（この時は“空配列=全削除”に切替）
-      if (valids.length === 0) {
-        // 全削除に倒す
-        const payload = { shift_id: currentShiftId, assignments: [] };
-        return saveRegisters(payload).then(() => {
-          // UI 側も空にして「未定」化を防ぐ
-          registerAssignments = [];
-          // showToast('このシフトのレジ割当を全削除しました');
-        }).catch(err => {
-          alert('保存に失敗しました（全削除）。サーバーログを確認してください。');
-          console.error(err);
-        });
+      // 4b) 自分内の重複レジチェック
+      const overlapConflicts = detectRegisterOverlaps(valids, selectedDate);
+      if (overlapConflicts.length) {
+        const shiftInfo = ($('#registerShiftInfo').text() || '').trim();
+        const messages = Array.from(new Set(overlapConflicts.map(c => c.message)));
+        const prefix = shiftInfo ? `${shiftInfo}
+` : '';
+        alert(`${prefix}同じ時間帯に複数のレジを割り当てることはできません。
+${messages.join('\n')}`);
+        return;
       }
 
-      // 5) 警告は**確認のみ**（非ブロッキング）
+      // 4c) 送信対象が無ければ全削除
+      if (valids.length === 0) {
+        const payload = {
+          shift_id: currentShiftId,
+          assignments: [],
+          shift_window: shiftWindow
+        };
+        return saveRegisters(payload).then(() => {
+          registerAssignments = [];
+        }).catch(showRegisterSaveError);
+      }
+
+      // 5) 警告の確認
       const warnCount = warnings.size + invalids.length;
       if (warnCount > 0) {
-        const ok = confirm(`注意：自動調整/スキップ等の検出が ${warnCount} 件あります。保存を続行しますか？`);
-        if (!ok) return; // ← キャンセルした場合のみ終了
+        const ok = confirm(`注意：自動調整/スキップ等の検知が ${warnCount} 件あります。保存を続行しますか？`);
+        if (!ok) return; // キャンセル時のみ終了
       }
 
-      // 6) UI を **確定値（valids）で上書き**。invalid は UI からも除外（未定化を防ぐ）
+      // 6) UIと同期
       registerAssignments = valids
         .map(({__invalid, ...rest}) => rest)
         .filter(a => {
           const rs = toDate(selectedDate, a.register_start_time);
           const re = toDate(selectedDate, a.register_end_time);
           return minutesBetween(rs, re) >= MIN_REG_MIN;
-      });
+        });
 
-      // 7) 送信用 payload（ここまで来たら**必ず送る**）
+      // 7) 送信用 payload
       const payload = {
         shift_id: currentShiftId,
         assignments: registerAssignments.map(a => ({
@@ -961,20 +1016,16 @@
           register_number: a.register_number,
           register_start_time: a.register_start_time,
           register_end_time: a.register_end_time
-        }))
+        })),
+        shift_window: shiftWindow
       };
 
-      // 8) 送信
+      // 8) 保存
       saveRegisters(payload)
-        .then((res) => {
-          // 返ってきた logs を見てトースト表示する等
-          // showToast('保存しました');
+        .then(res => {
           console.log('save ok', res);
         })
-        .catch(err => {
-          alert('保存に失敗しました。サーバーログを確認してください。');
-          console.error(err);
-        });
+        .catch(showRegisterSaveError);
     });
 
 

@@ -239,6 +239,36 @@ def save_register_assignments(request):
         data = json.loads(request.body)
         assignments = data.get('assignments', [])
         shift_id_in_body = data.get('shift_id')                 # ← 空配列用
+        shift_windows = {}
+
+        def attach_window(raw_shift_id, entry):
+            if entry is None or not isinstance(entry, dict):
+                return
+            sid = raw_shift_id
+            if sid is None:
+                return
+            try:
+                sid = int(sid)
+            except (TypeError, ValueError):
+                return
+            start_raw = entry.get('start')
+            end_raw = entry.get('end')
+            try:
+                start_time = datetime.strptime(start_raw, '%H:%M').time() if start_raw else None
+                end_time = datetime.strptime(end_raw, '%H:%M').time() if end_raw else None
+            except (ValueError, TypeError):
+                return
+            shift_windows[sid] = {'start': start_time, 'end': end_time}
+
+        raw_windows = data.get('shift_windows')
+        if isinstance(raw_windows, dict):
+            for key, value in raw_windows.items():
+                if isinstance(value, dict):
+                    attach_window(value.get('shift_id', key), value)
+        single_window = data.get('shift_window')
+        if isinstance(single_window, dict):
+            attach_window(single_window.get('shift_id', shift_id_in_body), single_window)
+
 
         # ---------- ① assignments が空なら、指定 shift_id を全削除 ----------
         if not assignments:
@@ -264,11 +294,19 @@ def save_register_assignments(request):
             e_time = datetime.strptime(a['register_end_time'],   '%H:%M').time()
 
             # シフト枠でクランプ（同日time同士の比較なのでそのままOK）
+            clamp_start = shift.confirmed_starttime or shift.starttime
+            clamp_end = shift.confirmed_endtime or shift.endtime
+            window = shift_windows.get(shift_id)
+            if window:
+                if window.get('start'):
+                    clamp_start = window['start']
+                if window.get('end'):
+                    clamp_end = window['end']
             cut = False
-            if s_time < shift.confirmed_starttime:
-                s_time, cut = shift.confirmed_starttime, True
-            if e_time > shift.confirmed_endtime:
-                e_time, cut = shift.confirmed_endtime, True
+            if clamp_start and s_time < clamp_start:
+                s_time, cut = clamp_start, True
+            if clamp_end and e_time > clamp_end:
+                e_time, cut = clamp_end, True
 
             # 幅が無い/逆転 → 完全非重複なのでスキップ（要件次第で 400 にしてもOK）
             if s_time >= e_time:
@@ -312,6 +350,29 @@ def save_register_assignments(request):
                         f'{b_start.strftime("%H:%M")}〜{b_end.strftime("%H:%M")} で重複しています'
                     )
                     return JsonResponse({'success': False, 'error': msg})
+
+        # ---------- ②-2 同一シフト内でのレジ重複チェック（番号が異なる場合も禁止） ----------
+        per_shift = {}
+        for record in norm:
+            per_shift.setdefault(record['shift_id'], []).append(record)
+
+        for sid, recs in per_shift.items():
+            shift_obj = shift_map.get(sid)
+            staff_name = getattr(getattr(shift_obj, 'staff', None), 'name', 'スタッフ') if shift_obj else 'スタッフ'
+            date_label = getattr(shift_obj, 'date', '')
+            ordered = sorted(recs, key=lambda r: (r['register_start_time'], r['register_end_time']))
+            for i, a in enumerate(ordered):
+                for b in ordered[i + 1:]:
+                    if a['register_number'] == b['register_number']:
+                        continue  # 同番号のチェックは既に済み
+                    if time_overlap(a['register_start_time'], a['register_end_time'],
+                                    b['register_start_time'], b['register_end_time']):
+                        msg = (
+                            f'{date_label} {staff_name} のシフト内で ' 
+                            f'レジ{a["register_number"]} {a["register_start_time"].strftime("%H:%M")}〜{a["register_end_time"].strftime("%H:%M")} と ' 
+                            f'レジ{b["register_number"]} {b["register_start_time"].strftime("%H:%M")}〜{b["register_end_time"].strftime("%H:%M")} が重複しています。'
+                        )
+                        return JsonResponse({'success': False, 'error': msg})
 
         # ---------- ③ 既存 DB との重複チェック（正規化後の norm を使用） ----------
         # shift_map は STEP 0 で取得済み
