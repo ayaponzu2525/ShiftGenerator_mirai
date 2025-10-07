@@ -371,6 +371,7 @@
 
     const selectedDate = '{{ selected_date|date:"Y-m-d" }}';
 
+    const dirtyRegisterShiftIds = new Set(); // 自動クランプ等でUIだけ変わったレジがあるシフト
     const MIN_REG_MIN = 5;              // 5分未満は削除
     const warnings = new Map();
     function addWarning(key, detail) {
@@ -445,7 +446,33 @@
         scheduleRefreshSummary(); // ← 追加後すぐ集計を更新
         },
         onUpdate: function (item, callback) {
-          callback(null);  // 完全に何もしない
+          if (!isShift(item)) { callback(item); return; }
+          // 先に反映して位置（長さ）を確定
+          callback(item);
+
+          // シフト自身の表示＆保存記録
+          const moved = items.get(item.id);
+          relabelIfShift(moved);
+          onTaskBarChanged('update', moved);
+
+          // 伸縮に伴うレジのクランプ（onMoveと同じロジック）
+          const regs = items.get({ filter: it => isReg(it) && it.shift_id === item.id });
+          if (!regs.length) return;
+          const updates = [], removes = [];
+          regs.forEach(r => {
+            const before = { start: new Date(r.start), end: new Date(r.end) };
+            const clamped = clampToShift(moved, r);
+            if (clamped) {
+              const changed = ms(clamped.start)!==ms(r.start) || ms(clamped.end)!==ms(r.end);
+              if (changed) updates.push(clamped);
+            } else {
+              removes.push(r.id);
+            }
+          });
+          if (updates.length) items.update(updates);
+          if (removes.length) items.remove(removes);
+          clearRegWarningsForShift(item.id);   // 古い警告を掃除
+          dirtyRegisterShiftIds.add(item.id);
         },
         onMove: function(item, callback) {
           if (!isShift(item)) { callback(item); return; }
@@ -501,6 +528,7 @@
 
           // UIは最新＝警告も最新にする
           clearRegWarningsForShift(item.id);
+          dirtyRegisterShiftIds.add(item.id);
         },
         onRemove: function (item, callback) {
             // ★ wish-アイテムならドラッグ自体を無効化
@@ -564,6 +592,11 @@
     let currentShiftId = null;
     let registerAssignments = [];  // 一時保存
 
+    function minutesBetween(dateA, dateB){
+      const a = (dateA instanceof Date)? dateA : new Date(dateA);
+      const b = (dateB instanceof Date)? dateB : new Date(dateB);
+      return Math.abs((b - a) / 60000);
+    }
 
     function hhmmFromDate(d){
       const t = (d instanceof Date) ? d : new Date(d);
@@ -587,7 +620,9 @@
       // ① まず UI の現在値を採用
       const uiRegs = items.get({ filter: it => isReg(it) && it.shift_id === itemId });
       if (uiRegs.length > 0) {
-        registerAssignments = uiRegs.map(r => ({
+        registerAssignments = uiRegs
+          .filter(r => minutesBetween(r.start, r.end) >= MIN_REG_MIN)
+          .map(r => ({
           id: String(r.id).replace(/^reg-/, ''),             // 数字ID相当に整形（新規は空でもOK）
           register_number: r.register_number,
           register_start_time: hhmmFromDate(r.start),
@@ -727,7 +762,7 @@
       const mm = String(d.getMinutes()).padStart(2, '0');
       return `${hh}:${mm}`;
     }
-
+    
     // レジの時間をシフト境界でクランプ
     function clampRegisterToShift(a, shiftStart, shiftEnd, selectedDate, warnings) {
       const rs = new Date(`${selectedDate}T${a.register_start_time}:00`);
@@ -910,7 +945,13 @@
       }
 
       // 6) UI を **確定値（valids）で上書き**。invalid は UI からも除外（未定化を防ぐ）
-      registerAssignments = valids.map(({__invalid, ...rest}) => rest);
+      registerAssignments = valids
+        .map(({__invalid, ...rest}) => rest)
+        .filter(a => {
+          const rs = toDate(selectedDate, a.register_start_time);
+          const re = toDate(selectedDate, a.register_end_time);
+          return minutesBetween(rs, re) >= MIN_REG_MIN;
+      });
 
       // 7) 送信用 payload（ここまで来たら**必ず送る**）
       const payload = {
@@ -1277,7 +1318,7 @@ function save_shifts() {
     filteredChanges
       .map(c => c?.item?.id)
       .filter(id => typeof id !== 'undefined')
-  ));
+  )).concat(Array.from(dirtyRegisterShiftIds));
 
   // 1) 先に各シフトのレジを「UI準拠」で保存（クランプ含む）
   const seq = affectedShiftIds.reduce(
