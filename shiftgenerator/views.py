@@ -425,6 +425,334 @@ def save_register_assignments(request):
     except Exception as e:
         return JsonResponse({'success': False, 'error': str(e)})
 
+@require_POST
+@user_passes_test(lambda u: u.is_superuser)
+def save_shift_and_registers(request):
+    try:
+        payload = json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        return JsonResponse({'success': False, 'error': '無効なリクエストです。'}, status=400)
+
+    changes = payload.get('changes') or []
+    registers_payload = payload.get('registers_by_shift') or {}
+
+    if not isinstance(changes, list) or not isinstance(registers_payload, dict):
+        return JsonResponse({'success': False, 'error': '無効なリクエストです。'}, status=400)
+
+    shift_changes = [c for c in changes if c.get('action') not in ('update_reg', 'remove_reg')]
+
+    normalized_shifts = []
+    normalized_registers = {}
+    versions = {}
+
+    def parse_iso_to_local(value):
+        dt = datetime.fromisoformat(str(value).replace('Z', ''))
+        if dt.tzinfo is None:
+            dt = timezone.make_aware(dt, pytz.UTC)
+        return dt.astimezone(timezone.get_current_timezone())
+    
+    def get_day_obj_safe(d):
+        try:
+            return DayOfWeek.objects.get(day_number=d.weekday())
+        except DayOfWeek.DoesNotExist:
+            return None  # day_of_week が必須ならここで ValidationError を返す運用でもOK
+
+
+    try:
+        with transaction.atomic():
+            touched_shift_ids = set()
+            shift_map = {}
+
+            for change in shift_changes:
+                action = change.get('action')
+                item = change.get('item') or {}
+                item_id = item.get('id')
+
+                if str(item_id).startswith('wish-'):
+                    continue
+
+                start_iso = item.get('start')
+                end_iso = item.get('end')
+                start_time = end_time = None
+                shift_date = None
+
+                if action in ('add', 'move', 'update'):
+                    if not start_iso or not end_iso:
+                        return JsonResponse({'success': False, 'error': 'シフトの開始・終了時刻が不足しています。'}, status=400)
+                    try:
+                        start_dt = parse_iso_to_local(start_iso)
+                        end_dt = parse_iso_to_local(end_iso)
+                    except Exception:
+                        return JsonResponse({'success': False, 'error': 'シフトの時間形式が不正です。'}, status=400)
+
+                    shift_date = start_dt.date()
+                    start_time = start_dt.time()
+                    end_time = end_dt.time()
+
+                new_staff = item.get('group')
+                if new_staff is not None:
+                    try:
+                        new_staff = int(new_staff)
+                    except (TypeError, ValueError):
+                        return JsonResponse({'success': False, 'error': 'スタッフIDが不正です。'}, status=400)
+
+                if action == 'add':
+                    if new_staff is None:
+                        return JsonResponse({'success': False, 'error': 'スタッフ情報が不足しています。'}, status=400)
+                    day_obj = get_day_obj_safe(shift_date)
+                    shift = ShiftPreference.objects.create(
+                        staff_id=new_staff,
+                        date=shift_date,
+                        confirmed_starttime=start_time,
+                        confirmed_endtime=end_time,
+                        day_of_week=day_obj
+                    )
+                    shift_map[shift.id] = shift
+                    touched_shift_ids.add(shift.id)
+
+                elif action in ('move', 'update'):
+                    if item_id is None:
+                        continue
+                    try:
+                        shift_id = int(item_id)
+                    except (TypeError, ValueError):
+                        return JsonResponse({'success': False, 'error': 'シフトIDが不正です。'}, status=400)
+
+                    shift = ShiftPreference.objects.select_for_update().get(id=shift_id)
+                    shift_map[shift.id] = shift
+                    touched_shift_ids.add(shift.id)
+
+                    if new_staff is not None and shift.staff_id != new_staff:
+                        shift.confirmed_starttime = None
+                        shift.confirmed_endtime = None
+                        shift.save()
+
+                        day_obj = get_day_obj_safe(shift_date)
+                        new_shift = ShiftPreference.objects.create(
+                            staff_id=new_staff,
+                            date=shift_date,
+                            confirmed_starttime=start_time,
+                            confirmed_endtime=end_time,
+                            day_of_week=day_obj
+                        )
+                        shift_map[new_shift.id] = new_shift
+                        touched_shift_ids.add(new_shift.id)
+                    else:
+                        shift.confirmed_starttime = start_time
+                        shift.confirmed_endtime = end_time
+                        shift.save()
+
+                elif action == 'remove' and item_id is not None:
+                    try:
+                        shift_id = int(item_id)
+                    except (TypeError, ValueError):
+                        return JsonResponse({'success': False, 'error': 'シフトIDが不正です。'}, status=400)
+                    shift = ShiftPreference.objects.select_for_update().get(id=shift_id)
+                    shift_map[shift.id] = shift
+                    shift.confirmed_starttime = None
+                    shift.confirmed_endtime = None
+                    shift.save()
+                    touched_shift_ids.add(shift.id)
+
+            register_shift_ids = set()
+            for key in registers_payload.keys():
+                try:
+                    register_shift_ids.add(int(key))
+                except (TypeError, ValueError):
+                    return JsonResponse({'success': False, 'error': 'レジ情報のシフトIDが不正です。'}, status=400)
+
+            touched_shift_ids.update(register_shift_ids)
+            all_shift_ids = set(touched_shift_ids) | register_shift_ids
+            if all_shift_ids:
+                db_shifts = ShiftPreference.objects.select_for_update().in_bulk(all_shift_ids)
+                shift_map.update(db_shifts)
+
+            for shift_id in register_shift_ids:
+                shift = shift_map.get(shift_id)
+                if not shift:
+                    return JsonResponse({'success': False, 'error': f'シフト {shift_id} が見つかりません。'}, status=400)
+
+                assignments = registers_payload.get(str(shift_id)) or []
+                norm_list = []
+
+                clamp_start = shift.confirmed_starttime or getattr(shift, 'starttime', None)
+                clamp_end   = shift.confirmed_endtime   or getattr(shift, 'endtime', None)
+
+
+                for entry in assignments:
+                    try:
+                        reg_no = int(entry.get('register_number'))
+                        start_str = entry.get('register_start_time')
+                        end_str = entry.get('register_end_time')
+                        start_t = datetime.strptime(start_str, '%H:%M').time()
+                        end_t = datetime.strptime(end_str, '%H:%M').time()
+                    except (TypeError, ValueError):
+                        return JsonResponse({'success': False, 'error': 'レジ時間の形式が不正です。'}, status=400)
+
+                    if clamp_start and start_t < clamp_start:
+                        start_t = clamp_start
+                    if clamp_end and end_t > clamp_end:
+                        end_t = clamp_end
+                    if start_t >= end_t:
+                        continue
+                    start_dt = datetime.combine(shift.date, start_t)
+                    end_dt   = datetime.combine(shift.date, end_t)
+                    duration_minutes = int((end_dt - start_dt).total_seconds() // 60)
+                    if duration_minutes < 5:
+                        continue
+
+                    norm_list.append({
+                        'shift_id': shift_id,
+                        'register_number': reg_no,
+                        'start': start_t,
+                        'end': end_t,
+                    })
+
+                for i, a in enumerate(norm_list):
+                    for b in norm_list[i + 1:]:
+                        if a['register_number'] != b['register_number']:
+                            continue
+                        if time_overlap(a['start'], a['end'], b['start'], b['end']):
+                            staff_name = getattr(getattr(shift, 'staff', None), 'name', 'スタッフ')
+                            msg = (
+                                f'{shift.date} {staff_name} のレジ重複：'
+                                f'レジ{a["register_number"]}（{a["start"].strftime("%H:%M")}〜{a["end"].strftime("%H:%M")}）と '
+                                f'レジ{b["register_number"]}（{b["start"].strftime("%H:%M")}〜{b["end"].strftime("%H:%M")}）が同時刻です'
+                            )
+                            conflict = {
+                                'shift_id': shift_id,
+                                'type': 'register_number_overlap',
+                                'a': {
+                                    'number': a['register_number'],
+                                    'start': a['start'].strftime('%H:%M'),
+                                    'end': a['end'].strftime('%H:%M'),
+                                },
+                                'b': {
+                                    'number': b['register_number'],
+                                    'start': b['start'].strftime('%H:%M'),
+                                    'end': b['end'].strftime('%H:%M'),
+                                },
+                            }
+                            return JsonResponse({'success': False, 'error': msg, 'conflicts': [conflict]})
+
+                ordered = sorted(norm_list, key=lambda x: (x['start'], x['end']))
+                for i, a in enumerate(ordered):
+                    for b in ordered[i + 1:]:
+                        if time_overlap(a['start'], a['end'], b['start'], b['end']):
+                            staff_name = getattr(getattr(shift, 'staff', None), 'name', 'スタッフ')
+                            msg = (
+                                f'{shift.date} {staff_name} のレジ重複：'
+                                f'レジ{a["register_number"]}（{a["start"].strftime("%H:%M")}〜{a["end"].strftime("%H:%M")}）と '
+                                f'レジ{b["register_number"]}（{b["start"].strftime("%H:%M")}〜{b["end"].strftime("%H:%M")}）が同時刻です'
+                            )
+                            conflict = {
+                                'shift_id': shift_id,
+                                'type': 'intra_staff_overlap',
+                                'a': {
+                                    'number': a['register_number'],
+                                    'start': a['start'].strftime('%H:%M'),
+                                    'end': a['end'].strftime('%H:%M'),
+                                },
+                                'b': {
+                                    'number': b['register_number'],
+                                    'start': b['start'].strftime('%H:%M'),
+                                    'end': b['end'].strftime('%H:%M'),
+                                },
+                            }
+                            return JsonResponse({'success': False, 'error': msg, 'conflicts': [conflict]})
+
+                # 他スタッフ（同一日・同一レジ番号）との重複チェック
+                for record in norm_list:
+                    qs = (
+                        ShiftRegisterAssignment.objects
+                        .filter(
+                            shift__date=shift.date,
+                            register_number=record['register_number'],
+                        )
+                        .exclude(shift_id=shift_id)
+                        .select_related('shift')
+                    )
+
+                    for existed in qs:
+                        if time_overlap(record['start'], record['end'],
+                                        existed.register_start_time, existed.register_end_time):
+                            other_staff = getattr(getattr(existed.shift, 'staff', None), 'name', 'スタッフ')
+                            msg = (
+                                f'{shift.date} のレジ{record["register_number"]} は '
+                                f'{other_staff}'
+                                f'（{existed.register_start_time.strftime("%H:%M")}〜{existed.register_end_time.strftime("%H:%M")}）と重複しています'
+                            )
+                            conflict = {
+                                'shift_id': shift_id,
+                                'type': 'register_number_conflict',
+                                'a': {
+                                    'number': record['register_number'],
+                                    'start': record['start'].strftime('%H:%M'),
+                                    'end': record['end'].strftime('%H:%M'),
+                                },
+                                'b': {
+                                    'number': record['register_number'],
+                                    'start': existed.register_start_time.strftime('%H:%M'),
+                                    'end': existed.register_end_time.strftime('%H:%M'),
+                                    'staff': other_staff,
+                                },
+                            }
+                            return JsonResponse({'success': False, 'error': msg, 'conflicts': [conflict]})
+
+                ShiftRegisterAssignment.objects.filter(shift_id=shift_id).delete()
+                if norm_list:
+                    ShiftRegisterAssignment.objects.bulk_create([
+                        ShiftRegisterAssignment(
+                            shift=shift,
+                            register_number=rec['register_number'],
+                            register_start_time=rec['start'],
+                            register_end_time=rec['end']
+                        ) for rec in norm_list
+                    ])
+
+                normalized_registers[str(shift_id)] = [
+                    {
+                        'register_number': rec['register_number'],
+                        'register_start_time': rec['start'].strftime('%H:%M'),
+                        'register_end_time': rec['end'].strftime('%H:%M'),
+                    } for rec in norm_list
+                ]
+
+            for raw_id in registers_payload.keys():
+                key = str(raw_id)
+                if key not in normalized_registers:
+                    normalized_registers[key] = []
+
+            for shift_id in touched_shift_ids:
+                shift = shift_map.get(shift_id)
+                if not shift:
+                    continue
+                start_val = end_val = None
+                if shift.confirmed_starttime and shift.confirmed_endtime:
+                    start_val = datetime.combine(shift.date, shift.confirmed_starttime).isoformat(timespec='seconds')
+                    end_val = datetime.combine(shift.date, shift.confirmed_endtime).isoformat(timespec='seconds')
+                normalized_shifts.append({
+                    'id': shift.id,
+                    'start': start_val,
+                    'end': end_val
+                })
+
+    except Exception as exc:
+        logger.exception('save_shift_and_registers error')
+        return JsonResponse({'success': False, 'error': '保存に失敗しました。もう一度お試しください。'})
+
+    return JsonResponse({
+        'success': True,
+        'normalized': {
+            'shifts': normalized_shifts,
+            'registers_by_shift': normalized_registers,
+        },
+        'versions': versions
+    })
+
+
+
+
 @require_GET
 @user_passes_test(lambda u: u.is_superuser)
 def get_register_assignments(request):

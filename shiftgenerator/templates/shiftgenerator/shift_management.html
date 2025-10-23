@@ -130,7 +130,8 @@
         <span class="mx-2">〜</span>
         <input type="date" id="endDate" class="form-control mr-2" style="min-width:130px;max-width:170px;">
         <button id="copyShiftsBtn" class="btn btn-success">📋 シフト希望を反映</button>
-        <button id="saveChangesBtn" class="btn btn-primary mr-2">💾 変更を保存</button>
+        <button id="saveChangesBtn" class="btn btn-primary mr-2">変更を保存</button>
+        <span id="unsavedIndicator" class="badge badge-warning ml-2" style="display:none;">未保存の変更</span>
         
       </div>
     </div>
@@ -340,6 +341,7 @@
             
             // remove アクションを追加
             changes.push({ action: 'remove', item: item });
+            updateUnsavedIndicator();
             return;  // 追加後は処理を終了
         }
 
@@ -350,7 +352,7 @@
           // changesに保存する直前に UUID 以外の情報を登録
           changes.push({ action: 'add', item: itemWithoutUUID});  // UUIDを除外したアイテムを渡す
           console.log('Current changes:', changes);
-          save_shifts();
+          updateUnsavedIndicator();
           return;
         }
 
@@ -366,12 +368,41 @@
         }
 
         console.log('Current changes:', changes);
+        updateUnsavedIndicator();
     }
 
     const selectedDate = '{{ selected_date|date:"Y-m-d" }}';
 
     const dirtyRegisterShiftIds = new Set(); // 自動クランプ等でUIだけ変わったレジがあるシフト
-    const MIN_REG_MIN = 5;              // 5分未満は削除
+    const unsavedIndicator = document.getElementById('unsavedIndicator');
+    const MIN_REG_MIN = 5;              // 5分未満
+
+    function hasUnsavedChanges() {
+      return changes.length > 0 || dirtyRegisterShiftIds.size > 0;
+    }
+
+    function updateUnsavedIndicator() {
+      if (!unsavedIndicator) return;
+      if (hasUnsavedChanges()) {
+        unsavedIndicator.style.display = 'inline-block';
+      } else {
+        unsavedIndicator.style.display = 'none';
+      }
+    }
+
+    function markRegisterDirty(shiftId) {
+      if (shiftId == null) return;
+      dirtyRegisterShiftIds.add(shiftId);
+      updateUnsavedIndicator();
+    }
+
+    window.addEventListener('beforeunload', function (event) {
+      if (!hasUnsavedChanges()) return;
+      event.preventDefault();
+      event.returnValue = '';
+    });
+
+    updateUnsavedIndicator();
     const warnings = new Map();
     function addWarning(key, detail) {
       warnings.set(key, detail);
@@ -389,7 +420,13 @@
     }
 
     function ms(d){ return +new Date(d); }
-    function isReg(item){ return String(item.id).startsWith('reg-'); }
+    function isReg(item){
+      const id = String(item.id || '');
+      if (id.startsWith('reg-')) return true;           // DBにあるレジ
+      if (id.startsWith('pending-reg-')) return true;   // UIドラフトのレジ
+      // 念のため className でも判定（将来id命名が変わっても拾える）
+      return !!(item.className && String(item.className).includes('register-item'));
+    }
     function isShift(item){ return !isReg(item) && !String(item.id).startsWith('wish-'); }
 
     // シフト範囲にクランプ（5分未満になったら null を返す）
@@ -471,7 +508,7 @@
           if (updates.length) items.update(updates);
           if (removes.length) items.remove(removes);
           clearRegWarningsForShift(item.id);   // 古い警告を掃除
-          dirtyRegisterShiftIds.add(item.id);
+          markRegisterDirty(item.id);
         },
         onMove: function(item, callback) {
           if (!isShift(item)) { callback(item); return; }
@@ -527,23 +564,41 @@
 
           // UIは最新＝警告も最新にする
           clearRegWarningsForShift(item.id);
-          dirtyRegisterShiftIds.add(item.id);
+          markRegisterDirty(item.id);
         },
         onRemove: function (item, callback) {
-            // ★ wish-アイテムならドラッグ自体を無効化
-            if (String(item.id).startsWith('wish-')) {
-                callback(null);      // タイムライン上でも元に戻す
-                return;
-            }
-            var confirmDelete = confirm('Are you sure you want to delete this item?');
-            if (confirmDelete) {
-                onTaskBarChanged('remove', item);
-                callback(item);
-                scheduleRefreshSummary(); // ← 追加後すぐ集計を更新
-            } else {
-                callback(null);
-            }
+          // 希望アイテムは削除不可
+          if (String(item.id).startsWith('wish-')) {
+            callback(null);
+            return;
+          }
+
+          if (!confirm('このシフトを削除しますか？')) {
+            callback(null);
+            return;
+          }
+
+          // 1) シフトをUIから削除（表示確定）
+          onTaskBarChanged('remove', item);
+          callback(item);
+
+          // 2) 紐づくレジ（reg-/pending-reg-/className=register-item）を即UIから削除
+          const regs = items.get({ filter: it => isReg(it) && it.shift_id === item.id });
+          if (regs.length) items.remove(regs.map(r => r.id));
+
+          // 3) モーダル用ドラフトがあれば破棄（再オープンで残像を出さない）
+          if (typeof registersDraftByShift !== 'undefined' && registersDraftByShift instanceof Map) {
+            registersDraftByShift.delete(item.id);
+          }
+
+          // 4) 一括保存で配下レジも削除させるため未保存フラグON
+          markRegisterDirty(item.id);
+
+          // 5) 警告掃除と集計更新
+          clearRegWarningsForShift(item.id);
+          scheduleRefreshSummary();
         },
+
           groupTemplate: function (group) {
             const wrap = document.createElement('div');
             wrap.className = 'd-flex align-items-center';
@@ -604,6 +659,7 @@
     // 共通：指定アイテムでレジ編集モーダルを開く（確定シフトのみ）
     function openRegisterForItem(itemId) {
       const idStr = String(itemId);
+      if (!shiftItem) return;  // ← 削除済みなら何もしない
       if (idStr.startsWith('wish-') || idStr.startsWith('reg-')) return;
 
       currentShiftId = itemId;
@@ -906,100 +962,133 @@
     }
 
     // 単一シフトのレジを「UI準拠」で保存（置き換え）
-    function flushRegistersForShift(shiftId){
-      const assignments = buildAssignmentsFromUI(shiftId);
-      const { start: shiftStart, end: shiftEnd } = getShiftBoundary(shiftId);
-      const payload = {
-        shift_id: shiftId,
-        assignments,
-        shift_window: {
+    function applyRegistersToTimeline(shiftId, assignments) {
+      const shiftItem = items.get(shiftId);
+      if (!shiftItem) return;
+      const existing = items.get({ filter: it => isReg(it) && it.shift_id === shiftId });
+      if (existing.length) items.remove(existing.map(it => it.id));
+      const baseId = Date.now();
+      const toAdd = [];
+      (assignments || []).forEach((a, index) => {
+        const start = timeToDate(selectedDate, a.register_start_time);
+        const end = timeToDate(selectedDate, a.register_end_time);
+        if (!start || !end || isNaN(+start) || isNaN(+end)) return;
+        toAdd.push({
+          id: 'pending-reg-' + shiftId + '-' + (baseId + index),
+          group: shiftItem.group,
+          content: 'レジ' + a.register_number,
+          start,
+          end,
+          type: 'range',
+          editable: false,
+          className: 'register-item reg' + a.register_number,
           shift_id: shiftId,
-          start: fmtHHMM(shiftStart),
-          end: fmtHHMM(shiftEnd)
-        }
-      };
-      return fetch("{% url 'shiftgenerator:save-register-assignments' %}", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-CSRFToken": "{{ csrf_token }}"
-        },
-        credentials: "same-origin",
-        body: JSON.stringify(payload)
-      })
-      .then(r => r.json())
-      .then(data => {
-        if (!data.success) throw new Error(data.error || 'レジ保存に失敗しました');
-        return refreshRegisterItemsForShift(shiftId); // ��ʂ��ŐVDB�l�ɒu������
+          register_number: a.register_number
+        });
       });
-    }
-    // 保存ボタン
-    function showRegisterSaveError(err) {
-      const detail = err && err.message ? `: ${err.message}` : '。サーバーのログを確認してください。';
-      alert(`保存に失敗しました${detail}`);
-      console.error(err);
+      if (toAdd.length) {
+        items.add(toAdd);
+      }
+      clearRegWarningsForShift(shiftId);
+      timeline.redraw();
+      scheduleRefreshSummary();
     }
 
-    $('#saveRegisterBtn').click(() => {
-      // 1) 入力を registerAssignments に取り込む
+    // 時間帯重複チェックユーティリティ
+    function timeOverlap(aStart, aEnd, bStart, bEnd) {
+      return aEnd > bStart && bEnd > aStart; // 半開区間と同等の扱い
+    }
+
+    // 他スタッフ・同番号・同日の重複検出（画面上の items だけで判定）
+    function detectCrossStaffRegisterConflicts(assignments, selectedDate, currentShiftId) {
+      const conflicts = [];
+      // 自シフト以外のレジ帯（DB由来 reg- とドラフト pending-reg- の両方）を対象
+      const others = items.get({ filter: it => isReg(it) && it.shift_id !== currentShiftId });
+
+      for (const a of assignments) {
+        const aStart = toDate(selectedDate, a.register_start_time);
+        const aEnd   = toDate(selectedDate, a.register_end_time);
+        if (!aStart || !aEnd || isNaN(+aStart) || isNaN(+aEnd)) continue;
+
+        for (const o of others) {
+          if (Number(o.register_number) !== Number(a.register_number)) continue;
+          const oStart = new Date(o.start);
+          const oEnd   = new Date(o.end);
+          if (!oStart || !oEnd || isNaN(+oStart) || isNaN(+oEnd)) continue;
+
+          if (timeOverlap(aStart, aEnd, oStart, oEnd)) {
+            const staffName = (groups.get && groups.get(o.group)?.name) || '他スタッフ';
+            conflicts.push({
+              a,
+              other: {
+                staff: staffName,
+                reg: o.register_number,
+                start: hhmm(oStart),
+                end:   hhmm(oEnd),
+              }
+            });
+          }
+        }
+      }
+      return conflicts;
+    }
+
+    // 保存ボタン
+
+        $('#saveRegisterBtn').click(() => {
       $('#registerList .input-group').each(function(i) {
         registerAssignments[i].register_number = parseInt($(this).find('.regNum').val(), 10);
         registerAssignments[i].register_start_time = $(this).find('.regStartTime').val();
         registerAssignments[i].register_end_time = $(this).find('.regEndTime').val();
       });
 
-      // 2) シフト境界
       const { start: shiftStart, end: shiftEnd } = getShiftBoundary(currentShiftId);
-      const shiftWindow = {
-        shift_id: currentShiftId,
-        start: fmtHHMM(shiftStart),
-        end: fmtHHMM(shiftEnd)
-      };
       const warnings = new Set();
       const adjusted = [];
 
-      // 3) 全レジをクランプ
       for (const a of registerAssignments) {
         const c = clampRegisterToShift(a, shiftStart, shiftEnd, selectedDate, warnings);
         adjusted.push(c);
       }
 
-      // 4) 無効は除外
       const invalids = adjusted.filter(a => a.__invalid);
       const valids   = adjusted.filter(a => !a.__invalid);
 
-      // 4b) 自分内の重複レジチェック
       const overlapConflicts = detectRegisterOverlaps(valids, selectedDate);
       if (overlapConflicts.length) {
         const shiftInfo = ($('#registerShiftInfo').text() || '').trim();
         const messages = Array.from(new Set(overlapConflicts.map(c => c.message)));
-        const prefix = shiftInfo ? `${shiftInfo}
-` : '';
-        alert(`${prefix}同じ時間帯に複数のレジを割り当てることはできません。
-${messages.join('\n')}`);
+        const prefix = shiftInfo ? `${shiftInfo}\n` : '';
+        alert(`${prefix}同じ時間帯に複数のレジを割り当てることはできません。\n${messages.join('\n')}`);
         return;
       }
 
-      // 4c) 送信対象が無ければ全削除
-      if (valids.length === 0) {
-        const payload = {
-          shift_id: currentShiftId,
-          assignments: [],
-          shift_window: shiftWindow
-        };
-        return saveRegisters(payload).then(() => {
-          registerAssignments = [];
-        }).catch(showRegisterSaveError);
+       // ★ 追加：他スタッフの同番号レジとの重複チェック（クロススタッフ）
+      const crossConflicts = detectCrossStaffRegisterConflicts(valids, selectedDate, currentShiftId);
+      if (crossConflicts.length) {
+        const shiftInfo = ($('#registerShiftInfo').text() || '').trim();
+        const lines = crossConflicts.map(c =>
+          `レジ${c.other.reg} が ${c.other.staff} の ${c.other.start}〜${c.other.end} と重複しています`
+        );
+        const prefix = shiftInfo ? `${shiftInfo}\n` : '';
+        alert(`${prefix}${lines.join('\n')}`);
+        return;
       }
 
-      // 5) 警告の確認
+      if (valids.length === 0) {
+        registerAssignments = [];
+        applyRegistersToTimeline(currentShiftId, registerAssignments);
+        markRegisterDirty(currentShiftId);
+        $('#registerModal').modal('hide');
+        return;
+      }
+
       const warnCount = warnings.size + invalids.length;
       if (warnCount > 0) {
         const ok = confirm(`注意：自動調整/スキップ等の検知が ${warnCount} 件あります。保存を続行しますか？`);
-        if (!ok) return; // キャンセル時のみ終了
+        if (!ok) return;
       }
 
-      // 6) UIと同期
       registerAssignments = valids
         .map(({__invalid, ...rest}) => rest)
         .filter(a => {
@@ -1008,24 +1097,9 @@ ${messages.join('\n')}`);
           return minutesBetween(rs, re) >= MIN_REG_MIN;
         });
 
-      // 7) 送信用 payload
-      const payload = {
-        shift_id: currentShiftId,
-        assignments: registerAssignments.map(a => ({
-          shift_id: currentShiftId,
-          register_number: a.register_number,
-          register_start_time: a.register_start_time,
-          register_end_time: a.register_end_time
-        })),
-        shift_window: shiftWindow
-      };
-
-      // 8) 保存
-      saveRegisters(payload)
-        .then(res => {
-          console.log('save ok', res);
-        })
-        .catch(showRegisterSaveError);
+      applyRegistersToTimeline(currentShiftId, registerAssignments);
+      markRegisterDirty(currentShiftId);
+      $('#registerModal').modal('hide');
     });
 
 
@@ -1282,7 +1356,7 @@ document.getElementById('saveChangesBtn').addEventListener('click', function(e) 
       return false;
     }
   }
-  save_shifts();  // 既存の保存処理
+  saveAllChanges();
 });
 
   // シフトIDに紐づくレジ警告を一掃
@@ -1317,7 +1391,7 @@ document.getElementById('saveChangesBtn').addEventListener('click', function(e) 
     const newDate = `${yyyy}-${mm}-${dd}`;
 
     // 変更があれば自動保存
-    if (changes.length > 0) {
+    if (hasUnsavedChanges()) {
       // 保存完了後に日付を変える
       save_shifts_and_move(newDate, dateInput);
     } else {
@@ -1327,104 +1401,126 @@ document.getElementById('saveChangesBtn').addEventListener('click', function(e) 
   }
 
   // 保存してから日付移動
+  // 日付移動時の処理
   function save_shifts_and_move(newDate, dateInput) {
-    fetch('{% url "shiftgenerator:save-shifts" %}', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRFToken': '{{ csrf_token }}'
-      },
-      body: JSON.stringify({ changes: changes })
-    })
-    .then(response => response.json())
-    .then(data => {
-      if (data.success) {
-        changes = [];
-        dateInput.value = newDate;
-        dateInput.form.submit();
-        console.log("更新があったので保存して日付移動");
-      } else {
-        alert('保存に失敗しました。');
+    saveAllChanges(() => {
+      dateInput.value = newDate;
+      dateInput.form.submit();
+    });
+  }
+
+  function collectShiftChanges() {
+    return (changes || []).filter(c => {
+      const id = String(c.item.id || '');
+      if (id.startsWith('wish-')) return false;
+      return c.action !== 'update_reg' && c.action !== 'remove_reg';
+    });
+  }
+
+  function buildSavePayload() {
+    const filteredChanges = collectShiftChanges();
+    const targetShiftIds = new Set();
+    filteredChanges.forEach(change => {
+      const sid = change?.item?.id;
+      if (typeof sid !== 'undefined') targetShiftIds.add(sid);
+    });
+    dirtyRegisterShiftIds.forEach(id => targetShiftIds.add(id));
+
+    const registers_by_shift = {};
+    const conflicts = [];
+
+    Array.from(targetShiftIds).forEach(rawId => {
+      const numericId = Number(rawId);
+      if (!Number.isFinite(numericId)) return;
+      const assignments = buildAssignmentsFromUI(numericId);
+      const overlap = detectRegisterOverlaps(assignments, selectedDate);
+      if (overlap.length) {
+        conflicts.push({
+          shiftId: numericId,
+          messages: overlap.map(c => c.message)
+        });
+      }
+      registers_by_shift[String(numericId)] = assignments.map(a => ({
+        register_number: a.register_number,
+        register_start_time: a.register_start_time,
+        register_end_time: a.register_end_time
+      }));
+    });
+
+    Array.from(targetShiftIds).forEach(rawId => {
+      const numericId = Number(rawId);
+      if (!Number.isFinite(numericId)) return;
+      const key = String(numericId);
+      if (!(key in registers_by_shift)) {
+        registers_by_shift[key] = [];
       }
     });
+
+    return {
+      changes: filteredChanges,
+      registers_by_shift,
+      conflicts
+    };
   }
 
+  function saveAllChanges(postSuccess) {
+    if (!hasUnsavedChanges()) {
+      alert("変更はありません。");
+      return;
+    }
 
-function save_shifts() {
-  // 「確定シフト」だけ抽出（かつレジ系アクションは除外）
-  const filteredChanges = changes.filter(c => {
-    const id = String(c.item.id || '');
-    if (id.startsWith('wish-')) return false;
-    if (c.action === 'update_reg' || c.action === 'remove_reg') return false;
-    return true;
-  });
+    const payload = buildSavePayload();
+    const noShiftChanges = payload.changes.length === 0;
+    const noRegisterPayload = Object.keys(payload.registers_by_shift).length === 0;
+    if (noShiftChanges && noRegisterPayload) {
+      alert("変更はありません。");
+      return;
+    }
 
-  if (filteredChanges.length === 0) {
-    alert('変更はありません。（確定シフトが動いていません）');
-    return;
-  }
+    if (payload.conflicts.length) {
+      const message = payload.conflicts.map(c => c.messages.join("\n")).join("\n");
+      alert(message || "レジの入力内容を確認してください。");
+      return;
+    }
 
-  // 影響を受けるシフトIDを抽出
-  const affectedShiftIds = Array.from(new Set(
-    filteredChanges
-      .map(c => c?.item?.id)
-      .filter(id => typeof id !== 'undefined')
-  )).concat(Array.from(dirtyRegisterShiftIds));
+    const body = {
+      changes: payload.changes,
+      registers_by_shift: payload.registers_by_shift
+    };
 
-  // 1) 先に各シフトのレジを「UI準拠」で保存（クランプ含む）
-  const seq = affectedShiftIds.reduce(
-    (p, shiftId) => p.then(() => flushRegistersForShift(shiftId)),
-    Promise.resolve()
-  );
-  
-  // 2) その後にシフト本体を保存
-  seq.then(() => {
-    return fetch('{% url "shiftgenerator:save-shifts" %}', {
+    const saveBtn = document.getElementById('saveChangesBtn');
+    if (saveBtn) saveBtn.disabled = true;
+
+    fetch('{% url "shiftgenerator:save-shift-and-registers" %}', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-CSRFToken': '{{ csrf_token }}'
       },
-      body: JSON.stringify({ changes: filteredChanges })
-    });
-  })
-  .then(resp => resp.json())
-  .then(data => {
-    if (data.success) {
-      alert('変更が保存されました！');
-      changes = []; // ログをクリア
-      // リロードせずUIを最新にしたいならここで summary だけ更新:
-      // scheduleRefreshSummary();
-      window.location.reload();
-    } else {
-      alert('保存に失敗しました。');
-    }
-  })
-  .catch(err => {
-    console.error(err);
-    alert('保存中にエラーが発生しました（レジ→シフトの順序保存）。');
-  });
-}
-
- function saveRegisters(payload) {
-    return fetch("{% url 'shiftgenerator:save-register-assignments' %}", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-CSRFToken": "{{ csrf_token }}"
-      },
-      credentials: "same-origin",
-      body: JSON.stringify(payload)
+      body: JSON.stringify(body)
     })
-    .then(res => res.json())
-    .then(data => {
-      if (!data.success) throw new Error(data.error || "保存に失敗しました");
-      return refreshRegisterItemsForShift(currentShiftId).then(() => {
-        $('#registerModal').modal('hide');
-        refreshSummary(); // 集計も更新
-        return data;
-        });
-      })
+    .then(response => response.json())
+    .then(result => {
+      if (!result.success) {
+        alert(result.error || "保存に失敗しました。");
+        if (saveBtn) saveBtn.disabled = false;
+        return;
+      }
+      changes = [];
+      dirtyRegisterShiftIds.clear();
+      updateUnsavedIndicator();
+      if (saveBtn) saveBtn.disabled = false;
+      if (typeof postSuccess === 'function') {
+        postSuccess(result);
+      } else {
+        window.location.reload();
+      }
+    })
+    .catch(err => {
+      console.error(err);
+      alert("保存に失敗しました。");
+      if (saveBtn) saveBtn.disabled = false;
+    });
   }
 
 
