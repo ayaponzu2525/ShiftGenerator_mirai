@@ -91,6 +91,14 @@
       z-index: 0;  /* 一番奥に */
     }
 
+    .vis-item.new-shift {
+      background-color: #ffc107 !important; /* 黄色 */
+      border-color: #e0a800 !important;
+      color: #333;
+      font-weight: bold;
+    }
+
+
   .register-item {
     background-color: rgba(255, 165, 0, 0.6); /* オレンジ半透明 */
     height: 10px !important;
@@ -346,15 +354,17 @@
         }
 
         if (action === 'add'){
-          // UUIDを除外した新しいオブジェクトを作成
-          const { id, ...itemWithoutUUID } = item;  // id (UUID) を除去した新しいオブジェクトを生成
-          
-          // changesに保存する直前に UUID 以外の情報を登録
-          changes.push({ action: 'add', item: itemWithoutUUID});  // UUIDを除外したアイテムを渡す
-          console.log('Current changes:', changes);
-          updateUnsavedIndicator();
-          return;
-        }
+            // すでに同じ id の add があるなら上書きじゃなくスキップでOK
+            const exists = changes.findIndex(ch => ch.action === 'add' && ch.item.id === item.id);
+            if (exists >= 0) {
+              changes[exists] = { action: 'add', item: item }; // 最新で置き換える
+            } else {
+              changes.push({ action: 'add', item: item }); // idも含めて丸ごと
+            }
+            console.log('Current changes:', changes);
+            updateUnsavedIndicator();
+            return;
+          }
 
         // 既存のエントリがあるかチェック
         const existingIndex = changes.findIndex(change => change.item.id === item.id);
@@ -475,11 +485,51 @@
         },
         // onAdd
         onAdd: function (item, callback) {
-        // 追加直後にラベルを「HH:mm-HH:mm」に更新（表示だけ）
-        relabelIfShift(item);
-        onTaskBarChanged('add', item);
-        callback(item);
-        scheduleRefreshSummary(); // ← 追加後すぐ集計を更新
+          try {
+            const allowAdd = isCtrlDrag || ctrlHeld;
+
+            // console.debug('[onAdd] raw:', {
+            //   start: item.start,
+            //   end: item.end,
+            //   group: item.group,
+            //   isCtrlDrag,
+            //   ctrlHeld,
+            //   allowAdd
+            // });
+
+            if (!allowAdd) {
+              // console.debug('[onAdd] canceled: not ctrl-drag/hold');
+              callback(null);
+              return;
+            }
+
+            let start = new Date(item.start);
+            let end = item.end ? new Date(item.end)
+                              : new Date(start.getTime() + 60 * 60000);
+            item.className = 'new-shift'; // ★ 新規シフト用クラス！
+
+            if (end < start) [start, end] = [end, start];
+            if ((end - start) < 60 * 1000) {
+              end = new Date(start.getTime() + 60 * 60000);
+            }
+
+            item.start = start;
+            item.end   = end;
+
+            onTaskBarChanged('add', item);
+
+            callback(item);            // ← もう消えないはず
+            relabelIfShift(item);
+            scheduleRefreshSummary();
+            updateUnsavedIndicator && updateUnsavedIndicator();
+
+          } catch (e) {
+            // console.error('[onAdd] error', e, item);
+            // alert('onAdd中にエラー: ' + e.message);
+            callback(null);
+          } finally {
+            isCtrlDrag = false;
+          }
         },
         onUpdate: function (item, callback) {
           if (!isShift(item)) { callback(item); return; }
@@ -598,7 +648,6 @@
           clearRegWarningsForShift(item.id);
           scheduleRefreshSummary();
         },
-
           groupTemplate: function (group) {
             const wrap = document.createElement('div');
             wrap.className = 'd-flex align-items-center';
@@ -614,7 +663,9 @@
             return wrap;
           }
     };
+
     
+
 
     // 表示ラベル更新ユーティリティ
     function fmtHHMM(d) {
@@ -626,14 +677,56 @@
     function relabelIfShift(item) {
       const id = String(item.id || '');
       if (id.startsWith('wish-') || id.startsWith('reg-')) return;
-      item.content = `${fmtHHMM(item.start)}-${fmtHHMM(item.end)}`;
-      items.update(item); // 画面上の表示だけ更新
-      // 表示テキスト更新も「変更」とみなして集計を更新（軽いのでOK）
+
+      // 念のため start/end が有効かチェック（NaN落ち防止）
+      const s = new Date(item.start), e = new Date(item.end);
+      if (isNaN(+s) || isNaN(+e)) return;
+
+      item.content = `${fmtHHMM(s)}-${fmtHHMM(e)}`;
+      items.update(item);
       scheduleRefreshSummary();
     }
+
+
+      // 集計を現在の表示範囲＆最新itemsで再計算して描画
+      function refreshSummary() {
+        const range = timeline.getWindow();
+        const slots = generateHourlySlots(range.start, range.end);
+        const counts = calculateStaffCounts(slots, items.get());
+        renderSummary(counts);
+      }
+
+      // 軽量なデバウンス（多重更新を間引く）
+      let _sumTimer = null;
+      function scheduleRefreshSummary() {
+        if (_sumTimer) clearTimeout(_sumTimer);
+        _sumTimer = setTimeout(() => {
+          _sumTimer = null;
+          refreshSummary();
+        }, 40);
+      }
     // メインのタイムライン
     var container = document.getElementById('timeline');
     var timeline = new vis.Timeline(container, items, groups, options);
+
+    let isCtrlDrag = false;
+    let ctrlHeld = false;
+
+    // Ctrlキーの押下状態を常に追跡
+    document.addEventListener('keydown', e => {
+      if (e.ctrlKey) ctrlHeld = true;
+      document.body.style.cursor = 'crosshair'; // ★ カーソル変更
+    });
+    document.addEventListener('keyup', e => {
+      if (!e.ctrlKey) ctrlHeld = false;
+      document.body.style.cursor = ''; // ★ 戻す（デフォルト）
+    });
+
+    // ドラッグ開始時点でのCtrl状態を焼き付け
+    timeline.on('pointerdown', function (props) {
+      isCtrlDrag = ctrlHeld || (props.event && props.event.ctrlKey);
+    });
+
 
     // タイムラインの範囲が確定した後（ズーム完了など）
     timeline.on('rangechanged', () => scheduleRefreshSummary());
@@ -659,12 +752,11 @@
     // 共通：指定アイテムでレジ編集モーダルを開く（確定シフトのみ）
     function openRegisterForItem(itemId) {
       const idStr = String(itemId);
-      if (!shiftItem) return;  // ← 削除済みなら何もしない
       if (idStr.startsWith('wish-') || idStr.startsWith('reg-')) return;
 
-      currentShiftId = itemId;
       const shiftItem = items.get(itemId);
-      if (!shiftItem) return;
+      if (!shiftItem) return;      // ← ここでガード
+      currentShiftId = itemId;
 
       const startTime = new Date(shiftItem.start).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'});
       const endTime   = new Date(shiftItem.end).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'});
@@ -728,13 +820,6 @@
         })
         .catch(err => console.error('openRegisterForItem error:', err));
     }
-
-
-    // 単クリック：選択だけ（誤操作で開かない）
-    timeline.on('click', function (props) {
-      if (!props.item) return;
-      timeline.setSelection(props.item);
-    });
 
     // 右クリック：即モーダル（アイテム上のみ）
     timeline.on('contextmenu', function (props) {
@@ -1291,53 +1376,10 @@
     });
   };
 
-  // 集計を現在の表示範囲＆最新itemsで再計算して描画
-  function refreshSummary() {
-    const range = timeline.getWindow();
-    const slots = generateHourlySlots(range.start, range.end);
-    const counts = calculateStaffCounts(slots, items.get());
-    renderSummary(counts);
-  }
-
-  // 軽量なデバウンス（多重更新を間引く）
-  let _sumTimer = null;
-  function scheduleRefreshSummary() {
-    if (_sumTimer) clearTimeout(_sumTimer);
-    _sumTimer = setTimeout(() => {
-      _sumTimer = null;
-      refreshSummary();
-    }, 40);
-  }
-
 
   // 初回表示用
   items.get().forEach(it => relabelIfShift(it));
   refreshSummary();
-
-
-// ホイールイベントハンドラ
-function handleTimelineWheel(e) {
-      // Ctrl + ホイールでズームのみ許可
-      if (e.ctrlKey) {
-        e.preventDefault();
-        
-        const delta = e.deltaY;
-        const zoomFactor = delta < 0 ? 0.8 : 1.2;
-
-        const range = timeline.getWindow();
-        const start = range.start.valueOf();
-        const end = range.end.valueOf();
-        const interval = end - start;
-        const center = (start + end) / 2;
-
-        const newInterval = interval * zoomFactor;
-        const newStart = center - newInterval / 2;
-        const newEnd = center + newInterval / 2;
-        
-        timeline.setWindow(newStart, newEnd, { animation: false });
-      }
-      // それ以外（Shift や通常スクロール）は何もしない
-    }
 
 document.getElementById('saveChangesBtn').addEventListener('click', function(e) {
   if (warnings && warnings.size > 0) {
@@ -1692,33 +1734,31 @@ document.getElementById('saveChangesBtn').addEventListener('click', function(e) 
 
 
 
-    // Ctrlキーを押している間だけズームを有効にする設定
-    let ctrlPressed = false;
+   // === Zキーでズーム有効／離すと無効 ===
+    let zoomMode = false;
 
-    // Ctrlキーが押されたとき
-    document.addEventListener('keydown', function(event) {
-      if (event.ctrlKey) {
-        ctrlPressed = true;
-        timeline.setOptions({ zoomable: true }); // ズームを有効にする
+    document.addEventListener('keydown', e => {
+      if (e.key === 'z' || e.key === 'Z') {
+        zoomMode = true;
+        timeline.setOptions({ zoomable: true });
+        document.body.style.cursor = 'zoom-in'; // 視覚的にもわかりやすく
       }
     });
 
-    // Ctrlキーが離されたとき
-    document.addEventListener('keyup', function(event) {
-      if (!event.ctrlKey) {
-        ctrlPressed = false;
-        timeline.setOptions({ zoomable: false }); // ズームを無効にする
+    document.addEventListener('keyup', e => {
+      if (e.key === 'z' || e.key === 'Z') {
+        zoomMode = false;
+        timeline.setOptions({ zoomable: false });
+        document.body.style.cursor = ''; // 戻す
       }
     });
 
-    // ズーム機能を手動で有効にするトグル
+    // 万一ズーム後に残った場合の安全ガード
     timeline.on('rangechange', function () {
-      if (!ctrlPressed) {
+      if (!zoomMode) {
         timeline.setOptions({ zoomable: false });
       }
     });
-
-
 
   </script>
 </body>
