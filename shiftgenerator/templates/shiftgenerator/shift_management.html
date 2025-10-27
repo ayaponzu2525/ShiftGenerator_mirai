@@ -731,6 +731,44 @@
     // タイムラインの範囲が確定した後（ズーム完了など）
     timeline.on('rangechanged', () => scheduleRefreshSummary());
 
+
+
+    (function blockVisHorizontalScroll() {
+      const scrollBox = document.getElementById('timeline-wrapper');
+      
+      // ちょっと待って内部DOMが描画されてから刺す
+      setTimeout(() => {
+        const target =
+          document.querySelector('#timeline .vis-panel.vis-center') ||
+          document.querySelector('#timeline .vis-content') ||
+          document.querySelector('#timeline .vis-timeline');
+
+        if (!target) {
+          console.warn('vis内部パネルがまだ見つかりません');
+          return;
+        }
+
+        target.addEventListener(
+          'wheel',
+          function (e) {
+            if (zoomMode) return; // z中はズーム優先
+
+            // ★ capture フェーズで先に奪って、vis側に届く前に止める！
+            e.preventDefault();
+            e.stopPropagation();
+            if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+
+            // 縦スクロールのみ
+            const beforeLeft = scrollBox.scrollLeft;
+            scrollBox.scrollTop += e.deltaY;
+            scrollBox.scrollLeft = beforeLeft;
+          },
+          { passive: false, capture: true } // ← ここが超重要！
+        );
+      }, 300);
+    })();
+
+
     // DataSet の変更を監視（add/update/remove）
     items.on('add',    () => scheduleRefreshSummary());
     items.on('update', () => scheduleRefreshSummary());
