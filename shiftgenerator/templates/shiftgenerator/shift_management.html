@@ -352,20 +352,22 @@
             updateUnsavedIndicator();
             return;  // 追加後は処理を終了
         }
+      if (action === 'add') {
+        const payload = normalizeAddItem(item); // {group, start, end}
 
-        if (action === 'add'){
-            // すでに同じ id の add があるなら上書きじゃなくスキップでOK
-            const exists = changes.findIndex(ch => ch.action === 'add' && ch.item.id === item.id);
-            if (exists >= 0) {
-              changes[exists] = { action: 'add', item: item }; // 最新で置き換える
-            } else {
-              changes.push({ action: 'add', item: item }); // idも含めて丸ごと
-            }
-            console.log('Current changes:', changes);
-            updateUnsavedIndicator();
-            return;
-          }
+        // すでに同一内容の add があるなら置換ではなくスキップ（多重登録防止）
+        const idx = changes.findIndex(ch => ch.action === 'add' && sameAdd(ch.item, payload));
+        if (idx < 0) {
+          changes.push({ action: 'add', item: payload });
+        } else {
+          // 時間が全く同じなら更新不要。将来的に何か追加属性を持たせたらここで更新。
+          changes[idx] = { action: 'add', item: payload };
+        }
 
+        console.log('ADD payload ->', payload);
+        updateUnsavedIndicator();
+        return;
+      }
         // 既存のエントリがあるかチェック
         const existingIndex = changes.findIndex(change => change.item.id === item.id);
 
@@ -406,7 +408,9 @@
       updateUnsavedIndicator();
     }
 
+    let __bulkRunning = false;
     window.addEventListener('beforeunload', function (event) {
+      if (__bulkRunning) return;            // ★ バルク中はブロックしない
       if (!hasUnsavedChanges()) return;
       event.preventDefault();
       event.returnValue = '';
@@ -974,6 +978,77 @@
       };
     }
 
+    // "YYYY-MM-DD" を返す
+    function ymdStr(x){ const d = (x instanceof Date)? x : new Date(x);
+      const m = String(d.getMonth()+1).padStart(2,'0');
+      const da = String(d.getDate()).padStart(2,'0');
+      return `${d.getFullYear()}-${m}-${da}`;
+    }
+
+    // item.start の日付が [startYmd, endYmd] に入っているか
+    function isItemInDateRange(item, startYmd, endYmd){
+      const y = ymdStr(item.start);
+      return y >= startYmd && y <= endYmd;
+    }
+
+    // 指定範囲 × 指定スタッフ(nullで全員) を
+    // 「確定シフト＋配下レジ 全消し → wishから確定を作り直し」
+    function resetToWishForRange(startYmd, endYmd, staffIdOrNull){
+
+      // 1) 対象の「確定シフト」を全部集める（希望の有無は見ない）
+      const targetShifts = items.get({ filter: it =>
+        isShift(it) &&                              // レジでもwishでもない「確定シフト」
+        isItemInDateRange(it, startYmd, endYmd) &&  // 日付範囲内
+        (staffIdOrNull === null || Number(it.group) === Number(staffIdOrNull)) // 対象スタッフ
+      });
+
+      // 1-2) それらを削除キューに積みつつ、画面からも消す
+      targetShifts.forEach(shiftItem => {
+        // サーバ削除用（saveAllChanges でまとめて送られる）
+        changes.push({ action: 'remove', item: { id: shiftItem.id } });
+
+        // そのシフトに紐づくレジを全部削除（UI）＋ dirty フラグ
+        const regs = items.get({ filter: r =>
+          isReg(r) &&
+          r.shift_id === shiftItem.id &&
+          isItemInDateRange(r, startYmd, endYmd)
+        });
+        if (regs.length){
+          markRegisterDirty(shiftItem.id);
+          items.remove(regs.map(r => r.id));
+        }
+
+        // シフト本体もUIから除去
+        items.remove(shiftItem.id);
+      });
+
+      // 2) wish をベースに確定シフトを新規追加（changesにadd）
+      const wishShifts = items.get({ filter: it =>
+        String(it.id).startsWith('wish-') &&
+        isItemInDateRange(it, startYmd, endYmd) &&
+        (staffIdOrNull === null || Number(it.group) === Number(staffIdOrNull))
+      });
+
+      wishShifts.forEach(wish => {
+        // 画面上の表示用（Dateにして描画）
+        const newId = items.add({
+          content: `${fmtHHMM(wish.start)}-${fmtHHMM(wish.end)}`,
+          start:   new Date(wish.start),
+          end:     new Date(wish.end),
+          group:   wish.group
+        });
+
+        // サーバ保存用（文字列のまま → saveAllChanges で送信）
+        onTaskBarChanged('add', {
+          group: wish.group,
+          start: wish.start,  // "YYYY-MM-DDTHH:MM:SS"
+          end:   wish.end
+        });
+      });
+
+      updateUnsavedIndicator();
+      scheduleRefreshSummary();
+    }
 
 
     function detectRegisterOverlaps(assignments, selectedDate) {
@@ -1083,6 +1158,42 @@
       }
       return list;
     }
+
+    // 追加：ローカル日時 "YYYY-MM-DDTHH:MM:SS" にそろえる
+    function pad2(n){ return String(n).padStart(2,'0'); }
+
+    // "YYYY-MM-DDTHH:MM:SS±HH:MM" を返す（ローカル時刻ベース）
+    function toLocalISOWithOffset(x){
+      const d = (x instanceof Date) ? x : new Date(x); // "2025-11-01T09:00:00" でもOK（ローカル解釈）
+      const y = d.getFullYear();
+      const m = pad2(d.getMonth()+1);
+      const da= pad2(d.getDate());
+      const hh= pad2(d.getHours());
+      const mm= pad2(d.getMinutes());
+      const ss= pad2(d.getSeconds());
+      const offMin = -d.getTimezoneOffset(); // JSTなら+540
+      const sign = offMin >= 0 ? '+' : '-';
+      const oh = pad2(Math.floor(Math.abs(offMin)/60));
+      const om = pad2(Math.abs(offMin)%60);
+      return `${y}-${m}-${da}T${hh}:${mm}:${ss}${sign}${oh}:${om}`; // 例: ...T09:00:00+09:00
+    }
+
+    // 受け取った item を {group, start, end} に正規化（常にオフセット付き）
+    function normalizeAddItem(raw){
+      const i = Array.isArray(raw) ? raw[0] : raw;
+      return {
+        group: Number(i.group),
+        start: toLocalISOWithOffset(i.start),
+        end:   toLocalISOWithOffset(i.end),
+      };
+    }
+
+    function sameAdd(a,b){
+      return Number(a.group)===Number(b.group)
+          && String(a.start)===String(b.start)
+          && String(a.end)  ===String(b.end);
+    }
+
 
     // 単一シフトのレジを「UI準拠」で保存（置き換え）
     function applyRegistersToTimeline(shiftId, assignments) {
@@ -1660,6 +1771,120 @@ document.getElementById('saveChangesBtn').addEventListener('click', function(e) 
       return m ? m[1] : t;
     }
 
+    // "YYYY-MM-DD" を1日ずつ進める
+    function* ymdRangeIter(startYmd, endYmd){
+      const d = new Date(startYmd + 'T00:00:00');
+      const end = new Date(endYmd + 'T00:00:00');
+      for (; d <= end; d.setDate(d.getDate()+1)) {
+        const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), da = String(d.getDate()).padStart(2,'0');
+        yield `${y}-${m}-${da}`;
+      }
+    }
+
+    // その日のデータを items にロードしてから resolve する関数を用意
+    // ★ あなたの既存の「日付切替ロード関数」に合わせて中身を差し替えてください。
+    function ensureDayLoaded(ymd){
+      return new Promise((resolve) => {
+        // 例1：日付入力を変更→既存の onChange がロードする場合
+        const dateInput = document.getElementById('date'); // ← 実際のidに合わせる
+        if (dateInput && dateInput.value !== ymd) {
+          dateInput.value = ymd;
+          // 既存のロード関数を呼ぶ（名称はあなたの実装に合わせて）
+          if (typeof window.loadShiftsForDate === 'function') {
+            window.loadShiftsForDate(ymd).then(resolve);
+          } else {
+            // 変更イベントでロードされるタイプなら
+            dateInput.dispatchEvent(new Event('change', { bubbles:true }));
+            // タイムラインのロード完了イベントがあるならそこを hook。なければ少し待機（暫定）
+            setTimeout(resolve, 250); // ← 既存のロード時間に合わせて調整
+          }
+        } else {
+          resolve(); // すでにその日が表示中
+        }
+      });
+    }
+
+    async function loadShiftsForDate(ymd){
+      // 1) 取得
+      const res = await fetch(`/api/shift-day/?date=${encodeURIComponent(ymd)}`, {credentials:'same-origin'});
+      if (!res.ok) throw new Error('failed to load day');
+      const data = await res.json();
+
+      // 2) クリア
+      const allIds = items.getIds();
+      if (allIds.length) items.remove(allIds);
+
+      // 3) グループ再構築（スタッフ）
+      const groupIds = groups.getIds();
+      if (groupIds.length) groups.clear();
+      (data.staff || []).forEach(s => groups.add({id: s.id, name: s.name}));
+
+      // 4) 確定シフト
+      (data.preferences || []).forEach(p => {
+        const start = new Date(p.confirmed_starttime);
+        const end   = new Date(p.confirmed_endtime);
+        items.add({
+          id: p.id,
+          content: `${String(start.getHours()).padStart(2,'0')}:${String(start.getMinutes()).padStart(2,'0')}`
+                + `-${String(end.getHours()).padStart(2,'0')}:${String(end.getMinutes()).padStart(2,'0')}`,
+          start, end, group: p.staff_id
+        });
+      });
+
+      // 5) レジ帯（視認用）
+      if (data.registers_by_shift){
+        Object.entries(data.registers_by_shift).forEach(([shiftId, regs])=>{
+          const shift = items.get(Number(shiftId));
+          if (!shift) return;
+          (regs || []).forEach((r, i) => {
+            const s = new Date(`${data.date}T${r.register_start_time}:00`);
+            const e = new Date(`${data.date}T${r.register_end_time}:00`);
+            items.add({
+              id: `reg-${r.id}`,
+              group: shift.group,
+              content: `レジ${r.register_number}`,
+              start: s, end: e,
+              type: 'range',
+              editable: false,
+              className: `register-item reg${r.register_number}`,
+              shift_id: Number(shiftId),
+              register_number: r.register_number
+            });
+          });
+        });
+      }
+
+      // 6) 希望（背景）
+      (data.wish_preferences || []).forEach(w => {
+        items.add({
+          id: `wish-${w.id}`,
+          content: '',
+          start: `${w.date}T${w.starttime}`,
+          end:   `${w.date}T${w.endtime}`,
+          group: w.staff_id,
+          type: 'background',
+          className: 'wish-item',
+          editable: false,
+          selectable: false
+        });
+      });
+
+      // 7) タイムウィンドウを当日へ
+      timeline.setOptions({
+        start: new Date(`${data.date}T08:00:00`),
+        end:   new Date(`${data.date}T20:00:00`),
+        min:   new Date(`${data.date}T08:00:00`),
+        max:   new Date(`${data.date}T20:00:00`),
+      });
+
+      // 8) ラベル整形・集計更新・未保存表示
+      items.get().forEach(it => relabelIfShift(it));
+      scheduleRefreshSummary();
+      updateUnsavedIndicator && updateUnsavedIndicator();
+    }
+
+    // ensureDayLoaded から呼べるように公開
+    window.loadShiftsForDate = loadShiftsForDate;
 
 
     // シフトコピー用 日付入力のデフォルト値を設定
@@ -1672,38 +1897,87 @@ document.getElementById('saveChangesBtn').addEventListener('click', function(e) 
       if (!endInput.value)   endInput.value   = range.end;
     });
 
-     // ボタンクリックでシフト時間をコピーする
-     
-    document.getElementById('copyShiftsBtn').addEventListener('click', function () {
-    const start = document.getElementById('startDate').value;
-    const end = document.getElementById('endDate').value;
+    // 影響数（概算）を数える
+    function countTargetsForRange(startYmd, endYmd, staffIdOrNull){
+      const inRange = it => ymdStr(it.start) >= startYmd && ymdStr(it.start) <= endYmd;
+      const byStaff = it => (staffIdOrNull===null) || Number(it.group)===Number(staffIdOrNull);
 
-    if (!start || !end) {
-      alert('期間を指定してください');
-      return;
+      const shifts = items.get({ filter: it => isShift(it) && inRange(it) && byStaff(it) }).length;
+      const regs   = items.get({ filter: it => isReg(it)   && inRange(it) && byStaff(it) }).length;
+      const wishes = items.get({ filter: it => String(it.id).startsWith('wish-') && inRange(it) && byStaff(it) }).length;
+      return { shifts, regs, wishes };
     }
 
-    if (!confirm('今調整してるやつ消えるけどほんまにええ？')) return;
+    // 「RESET」入力を求める確認
+    function promptTypedConfirm(message, keyword='RESET'){
+      return new Promise(resolve => {
+        const input = prompt(`${message}\n\n続行するには ${keyword} と入力してください。`);
+        resolve(input === keyword);
+      });
+    }
 
-    fetch('{% url "shiftgenerator:copy-shifts" %}', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRFToken': '{{ csrf_token }}'
-      },
-      body: JSON.stringify({ start_date: start, end_date: end })
-    })
-    .then(res => res.json())
-    .then(data => {
-      if (data.success) {
-        alert('指定期間のシフト希望を反映しました。');
-        window.location.href = "{% url 'shiftgenerator:shift-management' %}";
-      } else {
-        alert('反映に失敗しました。');
+    // 全体/個人 兼用の確認
+    async function confirmBulkResetSafely(startYmd, endYmd, staffIdOrNull){
+      const {shifts, regs, wishes} = countTargetsForRange(startYmd, endYmd, staffIdOrNull);
+      const who = (staffIdOrNull===null) ? '全スタッフ' : `スタッフID ${staffIdOrNull}`;
+      const msg =
+    `【確認】${who} の ${startYmd} ～ ${endYmd} を
+    「確定シフト＋レジ全削除 → 希望シフトで再構成」します。
+
+    おおよその影響（現在ロード中日の概算）：
+    - 削除対象の確定シフト：約 ${shifts} 件
+    - 削除対象のレジ割当：約 ${regs} 件
+    - 追加される確定シフト（希望の数）：約 ${wishes} 件
+
+    この操作は未保存の変更として蓄積されます。`;
+      return await promptTypedConfirm(msg, 'RESET');
+    }
+
+     
+
+    // 📋 指定期間の全スタッフを “希望どおり” にリセット（サーバ側で実行）
+    document.getElementById('copyShiftsBtn').addEventListener('click', async function () {
+      const start = document.getElementById('startDate').value;
+      const end   = document.getElementById('endDate').value;
+      if (!start || !end) {
+        alert('期間を指定してください');
+        return;
+      }
+
+      // 影響件数の概算ダイアログ（いままでの confirmBulkResetSafely をそのまま使ってOK）
+      const ok = await confirmBulkResetSafely(start, end, null); // staffIdOrNull = null → 全員
+      if (!ok) return;
+
+      try {
+        const res = await fetch('{% url "shiftgenerator:bulk-reset-to-wish" %}', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token }}',
+          },
+          body: JSON.stringify({
+            start: start,
+            end:   end,
+            staff_id: null,   // 全員
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          alert(data.error || '一括リセットに失敗しました。');
+          return;
+        }
+
+        alert(`一括リセットが完了しました（${data.count} 件更新）。\n画面を再読み込みします。`);
+        window.location.reload();
+      } catch (e) {
+        console.error(e);
+        alert('通信エラーが発生しました。');
       }
     });
-  });
 
+
+    
     /* ===== 要素取得 ===== */
     const modal      = document.getElementById('staffModal');
     const modalTitle = document.getElementById('staffModalTitle');
@@ -1729,34 +2003,53 @@ document.getElementById('saveChangesBtn').addEventListener('click', function(e) 
       $('#staffModal').modal('show');
     });
 
-    /* ===== モーダル「反映する」ボタン ===== */
-    modalApply.addEventListener('click', () => {
-      const staffId = modal.dataset.staffId;
+    // 📋 指定スタッフの希望どおりにリセット（サーバ側で実行）
+    modalApply.addEventListener('click', async () => {
+      const staffId = Number(modal.dataset.staffId);  // モーダルを開くときに dataset.staffId に入れてあるやつ
       const start   = modalStart.value;
       const end     = modalEnd.value;
 
-      if (!start || !end) { alert('期間を入力してください'); return; }
+      if (!start || !end) {
+        alert('期間を入力してください');
+        return;
+      }
 
-      fetch('{% url "shiftgenerator:copy-shifts" %}', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json',
-                  'X-CSRFToken': '{{ csrf_token }}' },
-        body: JSON.stringify({ staff_id: staffId,
-                              start_date: start,
-                              end_date:   end })
-      })
-      .then(r => r.json())
-      .then(data => {
-        if (data.success) {
-          $('#staffModal').modal('hide');
-          alert('反映が完了しました');
-          window.location.reload();
-        } else {
-          alert('反映に失敗しました');
+      // 個人用の確認ダイアログ（既存の関数を活用）
+      const ok = await confirmBulkResetSafely(start, end, staffId);
+      if (!ok) return;
+
+      try {
+        const res = await fetch('{% url "shiftgenerator:bulk-reset-to-wish" %}', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token }}',
+          },
+          body: JSON.stringify({
+            start: start,
+            end:   end,
+            staff_id: staffId,
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          alert(data.error || '一括リセットに失敗しました。');
+          return;
         }
-      })
-      .catch(() => alert('通信エラー'));
+
+        $('#staffModal').modal('hide');
+
+        // いま表示中の日付だけ最新にしたいなら reload が一番楽
+        alert(`指定スタッフのリセットが完了しました（${data.count} 件更新）。`);
+        window.location.reload();
+      } catch (e) {
+        console.error(e);
+        alert('通信エラーが発生しました。');
+      }
     });
+
+
 
 
     const startInput = document.getElementById('startDate');

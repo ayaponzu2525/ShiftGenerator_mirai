@@ -1220,9 +1220,151 @@ def shift_management(request):
     }
     return render(request, 'shiftgenerator/shift_management.html', context)
 
+@login_required
+@require_POST
+@transaction.atomic
+def bulk_reset_to_wish(request):
+    """
+    指定した日付範囲のシフトを
+      - いったん確定シフト＋レジを全部クリア
+      - そのあと「希望(starttime/endtime)」から確定(confirmed_*)を作り直す
+    staff_id があればその人だけ、無ければ全員（is_active=True）対象。
+    """
+    import json
+    try:
+        payload = json.loads(request.body or "{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"success": False, "error": "JSON が不正です。"}, status=400)
 
+    start_str = payload.get("start")
+    end_str   = payload.get("end")
+    staff_id  = payload.get("staff_id")  # None または int
 
+    start = parse_date(start_str) if start_str else None
+    end   = parse_date(end_str)   if end_str   else None
 
+    if not start or not end or start > end:
+        return JsonResponse({"success": False, "error": "日付範囲が不正です。"}, status=400)
+
+    # 対象スタッフ
+    staff_qs = Staff.objects.filter(is_active=True)
+    if staff_id is not None:
+        staff_qs = staff_qs.filter(id=staff_id)
+
+    if not staff_qs.exists():
+        return JsonResponse({"success": False, "error": "対象スタッフが見つかりません。"}, status=404)
+
+    total_reset = 0
+
+    cur = start
+    from datetime import timedelta
+    while cur <= end:
+        # この日＋対象スタッフの ShiftPreference 全体
+        base_qs = ShiftPreference.objects.filter(date=cur, staff__in=staff_qs)
+
+        # ① 確定シフトに紐づくレジを全部削除
+        confirmed_qs = base_qs.filter(
+            confirmed_starttime__isnull=False,
+            confirmed_endtime__isnull=False,
+        )
+        shift_ids = list(confirmed_qs.values_list("id", flat=True))
+        if shift_ids:
+            ShiftRegisterAssignment.objects.filter(shift_id__in=shift_ids).delete()
+
+        # ② いったん確定時間を全部クリア
+        confirmed_qs.update(confirmed_starttime=None, confirmed_endtime=None)
+
+        # ③ 希望(starttime/endtime がある行)を「確定」にコピー
+        wish_qs = base_qs.filter(
+            starttime__isnull=False,
+            endtime__isnull=False,
+        )
+        for p in wish_qs:
+            p.confirmed_starttime = p.starttime
+            p.confirmed_endtime   = p.endtime
+            p.save(update_fields=["confirmed_starttime", "confirmed_endtime"])
+            total_reset += 1
+
+        cur += timedelta(days=1)
+
+    return JsonResponse({"success": True, "count": total_reset})
+@login_required
+@require_GET
+def api_shift_day(request):
+    date_str = request.GET.get('date')
+    if not date_str:
+        return JsonResponse({'error': 'date is required'}, status=400)
+
+    try:
+        target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+    except ValueError:
+        return JsonResponse({'error': 'invalid date'}, status=400)
+
+    # スタッフ一覧
+    staff_qs = Staff.objects.filter(is_active=True).order_by('id')
+    staff = [{'id': s.id, 'name': s.name} for s in staff_qs]
+
+    # helper: 日付と time/datetime を "YYYY-MM-DDTHH:MM:SS" に整形（tz変換しない）
+    def to_iso(dt_date, t_or_dt):
+        if t_or_dt is None:
+            return None
+        if isinstance(t_or_dt, time):
+            return f"{dt_date.isoformat()}T{t_or_dt.strftime('%H:%M:%S')}"
+        if isinstance(t_or_dt, datetime):
+            return t_or_dt.strftime('%Y-%m-%dT%H:%M:%S')
+        # 想定外は文字列化して落ちないようにする
+        return str(t_or_dt)
+
+    # 確定シフト（confirmed_* が埋まっているもの）
+    prefs = (
+        ShiftPreference.objects
+        .filter(
+            date=target_date,
+            confirmed_starttime__isnull=False,
+            confirmed_endtime__isnull=False,
+        )
+        .select_related('staff')
+        .order_by('staff_id', 'confirmed_starttime')
+    )
+
+    preferences = [{
+        'id': p.id,
+        'staff_id': p.staff_id,
+        'confirmed_starttime': to_iso(p.date, p.confirmed_starttime),
+        'confirmed_endtime':   to_iso(p.date, p.confirmed_endtime),
+    } for p in prefs]
+
+    # 希望（背景）
+    wishes_qs = (ShiftPreference.objects
+                 .filter(date=target_date)
+                 .select_related('staff'))
+
+    wish_preferences = [{
+        'id': w.id,
+        'staff_id': w.staff_id,
+        'date': w.date.strftime('%Y-%m-%d'),
+        'starttime': w.starttime.strftime('%H:%M:%S') if w.starttime else None,
+        'endtime':   w.endtime.strftime('%H:%M:%S')   if w.endtime   else None,
+    } for w in wishes_qs if w.starttime and w.endtime]
+
+    # レジ帯（related_name=register_assignments 前提）
+    registers_by_shift = {}
+    for p in prefs:
+        regs = p.register_assignments.all().order_by('register_start_time')
+        registers_by_shift[str(p.id)] = [{
+            'id': r.id,
+            'register_number': r.register_number,
+            'register_start_time': r.register_start_time.strftime('%H:%M') if r.register_start_time else None,
+            'register_end_time':   r.register_end_time.strftime('%H:%M')   if r.register_end_time   else None,
+        } for r in regs]
+
+    return JsonResponse({
+        'date': target_date.isoformat(),
+        'staff': staff,
+        'preferences': preferences,
+        'wish_preferences': wish_preferences,
+        'registers_by_shift': registers_by_shift,
+    })
 
 @login_required
 def shift_form(request):
