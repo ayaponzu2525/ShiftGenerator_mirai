@@ -718,12 +718,17 @@
 
     // Ctrlキーの押下状態を常に追跡
     document.addEventListener('keydown', e => {
-      if (e.ctrlKey) ctrlHeld = true;
-      document.body.style.cursor = 'crosshair'; // ★ カーソル変更
+      if (e.ctrlKey) {
+        ctrlHeld = true;
+        document.body.style.cursor = 'crosshair';
+      }
     });
+
     document.addEventListener('keyup', e => {
-      if (!e.ctrlKey) ctrlHeld = false;
-      document.body.style.cursor = ''; // ★ 戻す（デフォルト）
+      if (!e.ctrlKey) {
+        ctrlHeld = false;
+        document.body.style.cursor = '';
+      }
     });
 
     // ドラッグ開始時点でのCtrl状態を焼き付け
@@ -1748,6 +1753,17 @@ document.getElementById('saveChangesBtn').addEventListener('click', function(e) 
       };
     }
 
+    // シフトコピー用 日付入力のデフォルト値を設定
+    window.addEventListener('DOMContentLoaded', () => {
+      const startInput = document.getElementById('startDate');
+      const endInput   = document.getElementById('endDate');
+      const range = getNextHalfMonthRange();
+
+      if (startInput && !startInput.value) startInput.value = range.start;
+      if (endInput   && !endInput.value)   endInput.value   = range.end;
+    });
+
+
     // "HH:MM" でも "HH:MM:SS" でも selectedDate の Date を返す
     function timeToDate(selectedDate, t) {
       if (!t) return null;
@@ -1771,131 +1787,8 @@ document.getElementById('saveChangesBtn').addEventListener('click', function(e) 
       return m ? m[1] : t;
     }
 
-    // "YYYY-MM-DD" を1日ずつ進める
-    function* ymdRangeIter(startYmd, endYmd){
-      const d = new Date(startYmd + 'T00:00:00');
-      const end = new Date(endYmd + 'T00:00:00');
-      for (; d <= end; d.setDate(d.getDate()+1)) {
-        const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), da = String(d.getDate()).padStart(2,'0');
-        yield `${y}-${m}-${da}`;
-      }
-    }
-
-    // その日のデータを items にロードしてから resolve する関数を用意
-    // ★ あなたの既存の「日付切替ロード関数」に合わせて中身を差し替えてください。
-    function ensureDayLoaded(ymd){
-      return new Promise((resolve) => {
-        // 例1：日付入力を変更→既存の onChange がロードする場合
-        const dateInput = document.getElementById('date'); // ← 実際のidに合わせる
-        if (dateInput && dateInput.value !== ymd) {
-          dateInput.value = ymd;
-          // 既存のロード関数を呼ぶ（名称はあなたの実装に合わせて）
-          if (typeof window.loadShiftsForDate === 'function') {
-            window.loadShiftsForDate(ymd).then(resolve);
-          } else {
-            // 変更イベントでロードされるタイプなら
-            dateInput.dispatchEvent(new Event('change', { bubbles:true }));
-            // タイムラインのロード完了イベントがあるならそこを hook。なければ少し待機（暫定）
-            setTimeout(resolve, 250); // ← 既存のロード時間に合わせて調整
-          }
-        } else {
-          resolve(); // すでにその日が表示中
-        }
-      });
-    }
-
-    async function loadShiftsForDate(ymd){
-      // 1) 取得
-      const res = await fetch(`/api/shift-day/?date=${encodeURIComponent(ymd)}`, {credentials:'same-origin'});
-      if (!res.ok) throw new Error('failed to load day');
-      const data = await res.json();
-
-      // 2) クリア
-      const allIds = items.getIds();
-      if (allIds.length) items.remove(allIds);
-
-      // 3) グループ再構築（スタッフ）
-      const groupIds = groups.getIds();
-      if (groupIds.length) groups.clear();
-      (data.staff || []).forEach(s => groups.add({id: s.id, name: s.name}));
-
-      // 4) 確定シフト
-      (data.preferences || []).forEach(p => {
-        const start = new Date(p.confirmed_starttime);
-        const end   = new Date(p.confirmed_endtime);
-        items.add({
-          id: p.id,
-          content: `${String(start.getHours()).padStart(2,'0')}:${String(start.getMinutes()).padStart(2,'0')}`
-                + `-${String(end.getHours()).padStart(2,'0')}:${String(end.getMinutes()).padStart(2,'0')}`,
-          start, end, group: p.staff_id
-        });
-      });
-
-      // 5) レジ帯（視認用）
-      if (data.registers_by_shift){
-        Object.entries(data.registers_by_shift).forEach(([shiftId, regs])=>{
-          const shift = items.get(Number(shiftId));
-          if (!shift) return;
-          (regs || []).forEach((r, i) => {
-            const s = new Date(`${data.date}T${r.register_start_time}:00`);
-            const e = new Date(`${data.date}T${r.register_end_time}:00`);
-            items.add({
-              id: `reg-${r.id}`,
-              group: shift.group,
-              content: `レジ${r.register_number}`,
-              start: s, end: e,
-              type: 'range',
-              editable: false,
-              className: `register-item reg${r.register_number}`,
-              shift_id: Number(shiftId),
-              register_number: r.register_number
-            });
-          });
-        });
-      }
-
-      // 6) 希望（背景）
-      (data.wish_preferences || []).forEach(w => {
-        items.add({
-          id: `wish-${w.id}`,
-          content: '',
-          start: `${w.date}T${w.starttime}`,
-          end:   `${w.date}T${w.endtime}`,
-          group: w.staff_id,
-          type: 'background',
-          className: 'wish-item',
-          editable: false,
-          selectable: false
-        });
-      });
-
-      // 7) タイムウィンドウを当日へ
-      timeline.setOptions({
-        start: new Date(`${data.date}T08:00:00`),
-        end:   new Date(`${data.date}T20:00:00`),
-        min:   new Date(`${data.date}T08:00:00`),
-        max:   new Date(`${data.date}T20:00:00`),
-      });
-
-      // 8) ラベル整形・集計更新・未保存表示
-      items.get().forEach(it => relabelIfShift(it));
-      scheduleRefreshSummary();
-      updateUnsavedIndicator && updateUnsavedIndicator();
-    }
-
-    // ensureDayLoaded から呼べるように公開
-    window.loadShiftsForDate = loadShiftsForDate;
-
-
-    // シフトコピー用 日付入力のデフォルト値を設定
-    window.addEventListener('DOMContentLoaded', () => {
-      const startInput = document.getElementById('startDate');
-      const endInput   = document.getElementById('endDate');
-      const range = getNextHalfMonthRange();
-
-      if (!startInput.value) startInput.value = range.start;
-      if (!endInput.value)   endInput.value   = range.end;
-    });
+    
+    
 
     // 影響数（概算）を数える
     function countTargetsForRange(startYmd, endYmd, staffIdOrNull){
@@ -1977,6 +1870,7 @@ document.getElementById('saveChangesBtn').addEventListener('click', function(e) 
     });
 
 
+
     
     /* ===== 要素取得 ===== */
     const modal      = document.getElementById('staffModal');
@@ -2048,6 +1942,7 @@ document.getElementById('saveChangesBtn').addEventListener('click', function(e) 
         alert('通信エラーが発生しました。');
       }
     });
+
 
 
 

@@ -43,7 +43,6 @@ urlpatterns = [
 
     
     path('staff-management/', views.staff_management, name='staff-management'),
-    path('api/shift-day/', views.api_shift_day, name='api-shift-day'),
     path('bulk-reset-to-wish/', views.bulk_reset_to_wish, name='bulk-reset-to-wish'),
     path('staff-disable/<int:staff_id>/', views.staff_disable, name='staff-disable'),
     path('staff-skill/<int:staff_id>/', views.staff_skill, name='staff-skill'),
