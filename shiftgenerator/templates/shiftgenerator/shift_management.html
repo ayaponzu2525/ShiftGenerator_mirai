@@ -323,49 +323,72 @@
 
     function onTaskBarChanged(action, item) {
 
-        // ★ 「wish-」はすべて無視
-        if (String(item.id).startsWith('wish-')) {
-            console.log('skip wish item:', item.id);
-            return;   // 何も記録しない
+      // ★ 「wish-」はすべて無視
+      if (String(item.id).startsWith('wish-')) {
+        console.log('skip wish item:', item.id);
+        return;   // 何も記録しない
+      }
+
+      const id = item.id;
+      const key = String(id || '');
+
+      // ★ まだDBにない新規シフト（黄色）の判定
+      const isNewShift =
+        isShift(item) && String(item.className || '').includes('new-shift');
+
+      // ====== remove ======
+      if (action === 'remove') {
+
+      // ★ 1) まず「まだDBにない新規シフト（add）」を消せるか確認
+      const addIndex = changes.findIndex(change =>
+        change.action === 'add' &&
+        change.item &&
+        String(change.item.tmp_id || '') === key
+      );
+
+      if (addIndex >= 0) {
+
+        // 新規シフトの追加をキャンセル
+        changes.splice(addIndex, 1);
+
+        // ★ 対象 tmp_id と一致する dirty register を確実に消す
+        if (typeof dirtyRegisterShiftIds !== 'undefined' && dirtyRegisterShiftIds.delete) {
+          dirtyRegisterShiftIds.delete(key);    // tmp_id と一致するもの
         }
 
-        const id = item.id;
-        // ★ まだDBに保存されていない新規シフトかどうか（黄色シフト）
-        const isNewShift =
-          isShift(item) && String(item.className || '').includes('new-shift');
-
-        // ====== remove ======
-        if (action === 'remove') {
-
-            const key = String(id || '');
-
-            // ★ add 済みの新規シフト（tmp_id一致）なら add を消すだけ
-            const existingAddIndex = changes.findIndex(change =>
-              change.action === 'add' &&
-              change.item &&
-              (
-                String(change.item.id || '') === key ||         // 旧仕様 保険
-                String(change.item.tmp_id || '') === key        // 新仕様 tmp_id
-              )
-            );
-
-            if (existingAddIndex >= 0) {
-                // まだDBに無い add を取り消すだけ
-                changes.splice(existingAddIndex, 1);
-                console.log('Current changes (remove ADD):', changes);
-                updateUnsavedIndicator();
-                return;
-            }
-
-            // それ以外（既存シフト）の削除
-            changes = changes.filter(change => String(change.item.id || '') !== key);
-            console.log('Current changes (remove):', changes);
-
-            // remove アクションを追加
-            changes.push({ action: 'remove', item: item });
-            updateUnsavedIndicator();
-            return;  // 追加後は処理を終了
+        // ★ 万一レジ側が "shift_id" として group を参照していた場合にも備える
+        //   （あなたの実装では group=staff_id なので、ここは保険）
+        const altIdsToDelete = [];
+        for (const raw of dirtyRegisterShiftIds) {
+          if (String(raw).includes(key)) {
+            altIdsToDelete.push(raw);
+          }
         }
+        altIdsToDelete.forEach(id => dirtyRegisterShiftIds.delete(id));
+
+        console.log(
+          'Cancel new ADD -> changes:', changes,
+          'dirtyRegisterShiftIds:', dirtyRegisterShiftIds
+        );
+
+        updateUnsavedIndicator();
+        return;
+      }
+
+        // ★ 2) ここに来るのは「DBにある既存シフト」の削除
+        // そのidに関する古い変更（updateなど）があれば一旦消しておく
+        changes = changes.filter(change => {
+          const cid = String(change.item && change.item.id || '');
+          return cid !== key;
+        });
+
+        // その上で remove を1件だけ積む
+        changes.push({ action: 'remove', item: item });
+
+        console.log('Mark existing shift as removed -> changes:', changes);
+        updateUnsavedIndicator();
+        return;
+      }
 
         // ====== add ======
         if (action === 'add') {
@@ -427,8 +450,11 @@
     const MIN_REG_MIN = 5;              // 5分未満
 
     function hasUnsavedChanges() {
-      return changes.length > 0 || dirtyRegisterShiftIds.size > 0;
+      // ★ サーバに送るのと同じフィルタを使う
+      const filteredChanges = collectShiftChanges();
+      return filteredChanges.length > 0 || dirtyRegisterShiftIds.size > 0;
     }
+
 
     function updateUnsavedIndicator() {
       if (!unsavedIndicator) return;
@@ -441,7 +467,19 @@
 
     function markRegisterDirty(shiftId) {
       if (shiftId == null) return;
-      dirtyRegisterShiftIds.add(shiftId);
+
+      const key = String(shiftId);
+
+      // ★ すでにタイムライン上に存在しないシフトならゴミ扱い
+      //    → dirty に入れず、念のため削除して終了
+      const item = items.get(shiftId);
+      if (!item) {
+        dirtyRegisterShiftIds.delete(key);
+        return;
+      }
+
+      // ここまで来たら「まだ生きてるシフト」なので dirty として扱う
+      dirtyRegisterShiftIds.add(key);
       updateUnsavedIndicator();
     }
 
