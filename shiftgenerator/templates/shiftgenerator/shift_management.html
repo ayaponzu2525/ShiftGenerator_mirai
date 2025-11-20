@@ -329,46 +329,82 @@
             return;   // 何も記録しない
         }
 
-        // id は null にする
         const id = item.id;
+        // ★ まだDBに保存されていない新規シフトかどうか（黄色シフト）
+        const isNewShift =
+          isShift(item) && String(item.className || '').includes('new-shift');
 
+        // ====== remove ======
         if (action === 'remove') {
 
-          // remove の場合は該当アイテムを削除
-        const existingAddIndex = changes.findIndex(change => change.action === 'add' && change.item.id === item.id);
+            const key = String(id || '');
 
-        if (existingAddIndex >= 0) {
-            // 対象となる id が add アクションの場合は、そのアイテムを削除して何もしない
-            changes.splice(existingAddIndex, 1);  // add アクションを削除
-            console.log('Current changes:', changes);
-            return;  // 何もしない
-        }
-            // remove の場合は該当アイテムを削除
-            changes = changes.filter(change => change.item.id !== item.id);
-            console.log('Current changes:', changes);
-            
+            // ★ add 済みの新規シフト（tmp_id一致）なら add を消すだけ
+            const existingAddIndex = changes.findIndex(change =>
+              change.action === 'add' &&
+              change.item &&
+              (
+                String(change.item.id || '') === key ||         // 旧仕様 保険
+                String(change.item.tmp_id || '') === key        // 新仕様 tmp_id
+              )
+            );
+
+            if (existingAddIndex >= 0) {
+                // まだDBに無い add を取り消すだけ
+                changes.splice(existingAddIndex, 1);
+                console.log('Current changes (remove ADD):', changes);
+                updateUnsavedIndicator();
+                return;
+            }
+
+            // それ以外（既存シフト）の削除
+            changes = changes.filter(change => String(change.item.id || '') !== key);
+            console.log('Current changes (remove):', changes);
+
             // remove アクションを追加
             changes.push({ action: 'remove', item: item });
             updateUnsavedIndicator();
             return;  // 追加後は処理を終了
         }
-      if (action === 'add') {
-        const payload = normalizeAddItem(item); // {group, start, end}
 
-        // すでに同一内容の add があるなら置換ではなくスキップ（多重登録防止）
-        const idx = changes.findIndex(ch => ch.action === 'add' && sameAdd(ch.item, payload));
-        if (idx < 0) {
-          changes.push({ action: 'add', item: payload });
-        } else {
-          // 時間が全く同じなら更新不要。将来的に何か追加属性を持たせたらここで更新。
-          changes[idx] = { action: 'add', item: payload };
+        // ====== add ======
+        if (action === 'add') {
+            const payload = normalizeAddItem(item); // {tmp_id, group, start, end}
+
+            // すでに同一内容の add があるなら置換（多重登録防止）
+            const idx = changes.findIndex(ch => ch.action === 'add' && sameAdd(ch.item, payload));
+            if (idx < 0) {
+              changes.push({ action: 'add', item: payload });
+            } else {
+              changes[idx] = { action: 'add', item: payload };
+            }
+
+            console.log('ADD payload ->', payload);
+            updateUnsavedIndicator();
+            return;
         }
 
-        console.log('ADD payload ->', payload);
-        updateUnsavedIndicator();
-        return;
-      }
-        // 既存のエントリがあるかチェック
+        // ====== 新規シフト(add)に対する move/update は「addの中身を書き換える」 ======
+        if (isNewShift && (action === 'update' || action === 'move')) {
+            const key = String(id || '');
+
+            const addIndex = changes.findIndex(ch =>
+              ch.action === 'add' &&
+              ch.item &&
+              String(ch.item.tmp_id || '') === key
+            );
+
+            if (addIndex >= 0) {
+              const payload = normalizeAddItem(item);  // 新しい時間で再生成
+              changes[addIndex] = { action: 'add', item: payload };
+              console.log('Merged into ADD (new shift moved):', changes[addIndex]);
+              updateUnsavedIndicator();
+              return;   // ★ update としてはサーバに送らない
+            }
+            // 見つからなければ、下の通常ロジックにフォールバック
+        }
+
+        // ====== ここから下は「既存シフト(DBにある白いシフト)」用 ======
         const existingIndex = changes.findIndex(change => change.item.id === item.id);
 
         if (existingIndex >= 0) {
@@ -382,6 +418,7 @@
         console.log('Current changes:', changes);
         updateUnsavedIndicator();
     }
+
 
     const selectedDate = '{{ selected_date|date:"Y-m-d" }}';
 
@@ -1183,15 +1220,18 @@
       return `${y}-${m}-${da}T${hh}:${mm}:${ss}${sign}${oh}:${om}`; // 例: ...T09:00:00+09:00
     }
 
-    // 受け取った item を {group, start, end} に正規化（常にオフセット付き）
+    // 受け取った item を {tmp_id, group, start, end} に正規化（常にオフセット付き）
     function normalizeAddItem(raw){
       const i = Array.isArray(raw) ? raw[0] : raw;
       return {
+        // ★ vis がくれた一時IDをクライアント専用で保持（サーバには送らない）
+        tmp_id: String(i.id || ''),
         group: Number(i.group),
         start: toLocalISOWithOffset(i.start),
         end:   toLocalISOWithOffset(i.end),
       };
     }
+
 
     function sameAdd(a,b){
       return Number(a.group)===Number(b.group)
@@ -1606,12 +1646,22 @@ document.getElementById('saveChangesBtn').addEventListener('click', function(e) 
   }
 
   function collectShiftChanges() {
-    return (changes || []).filter(c => {
-      const id = String(c.item.id || '');
-      if (id.startsWith('wish-')) return false;
-      return c.action !== 'update_reg' && c.action !== 'remove_reg';
-    });
+    return (changes || [])
+      .filter(c => {
+        const id = String(c.item.id || '');
+        if (id.startsWith('wish-')) return false;
+        return c.action !== 'update_reg' && c.action !== 'remove_reg';
+      })
+      .map(c => {
+        // ★ add のときは tmp_id を落としてサーバには送らない
+        if (c.action === 'add' && c.item && 'tmp_id' in c.item) {
+          const { tmp_id, ...safe } = c.item;
+          return { action: 'add', item: safe };
+        }
+        return c;
+      });
   }
+
 
   function buildSavePayload() {
     const filteredChanges = collectShiftChanges();
