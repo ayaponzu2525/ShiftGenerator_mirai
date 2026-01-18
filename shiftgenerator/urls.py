@@ -49,6 +49,6 @@ urlpatterns = [
     path('staff-password/<int:staff_id>/', views.staff_password, name='staff-password'),
     path('staff-toggle/<int:staff_id>/', views.staff_toggle_active, name='staff-toggle'),
 
-
+    path('excel-export/', views.excel_export_dashboard, name='excel-export'),
 
 ]

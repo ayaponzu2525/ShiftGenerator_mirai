@@ -1,5 +1,6 @@
 from django.db import models
 
+
 '''
 <Staff>
 id: スタッフを一意に識別するためのプライマリーキー。自動増分。
@@ -48,6 +49,7 @@ from datetime import datetime
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
 from django.utils import timezone
+from django.core.validators import RegexValidator
 import uuid
 
 class CustomUserManager(BaseUserManager):
@@ -87,6 +89,11 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return self.username
+    
+excel_code_validator = RegexValidator(
+    regex=r'^[a-z]{1,3}$',
+    message='excel_code は a〜z（小文字）を 1〜3 文字で入力してください（例: a, m, aa）'
+)
 
 class Staff(models.Model):
     id = models.AutoField(primary_key=True)
@@ -95,7 +102,12 @@ class Staff(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     custom_user = models.OneToOneField(CustomUser, on_delete=models.CASCADE, related_name='staff_profile', null=True, blank=True)
-
+    excel_code = models.CharField(
+        max_length=3, null=True, blank=True,
+        validators=[excel_code_validator],
+        help_text="Excel列コード（例: a, b, ... , m, n, ...）"
+    )
+    
     def __str__(self):
         return self.name
 
@@ -226,6 +238,7 @@ class ShiftSubmissionPeriod(models.Model):
     def __str__(self):
         return f"{self.start_date.strftime('%Y年%m月%d日')}～{self.end_date.strftime('%m月%d日')}"
     
+    
 class ShiftSubmission(models.Model):
     staff = models.ForeignKey(Staff, on_delete=models.CASCADE)
     period = models.ForeignKey(ShiftSubmissionPeriod, on_delete=models.CASCADE)
@@ -245,3 +258,15 @@ class ShiftSubmission(models.Model):
 
     def __str__(self):
         return f"{self.staff.name} {self.period.label} {self.submission_status}"
+
+
+class ExcelExportTemplate(models.Model):
+    """
+    Excel出力用テンプレート（差し替え可能）
+    1件だけ使う想定（最新を使用）
+    """
+    file = models.FileField(upload_to='excel_templates/')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"ExcelTemplate {self.id} ({self.uploaded_at})"

@@ -24,6 +24,25 @@
         </div>
       </div>
 
+    <!-- Excel出力 -->
+    <div class="col-md-4 mb-4">
+      <div class="card shadow-sm border-warning h-100">
+        <div class="card-body text-center">
+          <div class="mb-2" style="font-size:2.5rem; color:#fd7e14;">
+            <i class="bi bi-file-earmark-excel"></i>
+          </div>
+          <h5 class="card-title">Excel出力</h5>
+          <p class="card-text text-muted small mb-3">
+            確定シフトを現場Excel形式で出力
+          </p>
+          <a href="{% url 'shiftgenerator:excel-export' %}"
+            class="btn btn-warning btn-block w-100">
+            Excel出力・設定画面へ
+          </a>
+        </div>
+      </div>
+    </div>
+
       <!-- シフト提出状況 -->
     <div class="col-md-4 mb-4">
     <div class="card shadow-sm border-success h-100">

@@ -23,12 +23,19 @@ from datetime import datetime, date, timedelta, time
 import csv
 from django.views.decorators.http import require_POST, require_GET
 
-from .forms import CustomUserCreationForm, ShiftPreferenceForm
-from .models import ShiftPreference, Staff, DayOfWeek, ShiftRegisterAssignment, ShiftHistory, Holiday, Skill, StaffSkill, ShiftSubmissionPeriod, ShiftSubmission
+from .forms import CustomUserCreationForm, ShiftPreferenceForm, ExcelTemplateUploadForm, StaffExcelCodeFormSet
+from .models import ShiftPreference, Staff, DayOfWeek, ShiftRegisterAssignment, ShiftHistory, Holiday, Skill, StaffSkill, ShiftSubmissionPeriod, ShiftSubmission, ExcelExportTemplate
 from django.contrib.auth.hashers import make_password
 from django.contrib import messages
 from django.db.models import Exists, OuterRef, Q
 from shiftgenerator.utils.utils import close_expired_periods
+import openpyxl
+from openpyxl.styles import PatternFill
+from openpyxl.styles import Alignment
+from io import BytesIO
+import re
+from datetime import date as dt_date
+
 
 # === 店舗営業時間（バックエンド側） ===
 BUSINESS_OPEN_TIME = time(8, 0)   # 08:00
@@ -1960,3 +1967,451 @@ def get_update_events(request):
 
 
     return JsonResponse({'success': True, 'events': events}, safe=False)
+
+
+CIRCLED = {1: "①", 2: "②", 3: "③", 4: "④"}
+
+
+def _tostr_hm(t):
+    """Time -> '8:30' / '20'（:00は省略）"""
+    if t is None:
+        return ''
+    h, m = t.hour, t.minute
+    if m == 0:
+        return str(h)
+    return f"{h}:{m:02d}"
+
+
+def _fmt_shift_range(start_t, end_t):
+    """'8:30~20'"""
+    if not start_t or not end_t:
+        return ''
+    return f"{_tostr_hm(start_t)}~{_tostr_hm(end_t)}"
+
+
+def _fmt_regs(regs):
+    """
+    regs: ShiftRegisterAssignment list
+    -> '②9~14\n③14~17'
+    """
+    lines = []
+    for r in sorted(regs, key=lambda x: (x.register_start_time or dt_date.min, x.register_number)):
+        mark = CIRCLED.get(r.register_number, f"({r.register_number})")
+        s = _tostr_hm(r.register_start_time)
+        e = _tostr_hm(r.register_end_time)
+        if s and e:
+            lines.append(f"{mark}{s}~{e}")
+    return "\n".join(lines)
+
+
+def _get_latest_template_path():
+    """
+    最新アップロードのテンプレを使う。
+    ない場合はプロジェクト内のデフォルトを使う想定にしておく。
+    """
+    latest = ExcelExportTemplate.objects.order_by('-uploaded_at').first()
+    if latest and latest.file:
+        return latest.file.path
+
+    # デフォルトテンプレ（必要ならパス調整）
+    # 例: BASE_DIR / 'shiftgenerator' / 'assets' / 'shift_template.xlsx'
+    return getattr(settings, 'EXCEL_EXPORT_DEFAULT_TEMPLATE', None)
+
+def _is_code_cell(v):
+    return isinstance(v, str) and re.fullmatch(r"[a-z]{1,3}", v.strip())
+
+def _is_day_cell(v):
+    return isinstance(v, int) or (isinstance(v, str) and v.strip().isdigit())
+
+def _find_header_rows(ws, min_codes=6):
+    """
+    a,b,c... が同じ行に複数並んでいる行を「ヘッダ行」として検出
+    min_codes は適当に 6〜10 くらいでOK（あなたのテンプレは余裕で超えるはず）
+    """
+    headers = []
+    for r in range(1, ws.max_row + 1):
+        cnt = 0
+        for c in range(1, ws.max_column + 1):
+            if _is_code_cell(ws.cell(r, c).value):
+                cnt += 1
+        if cnt >= min_codes:
+            headers.append(r)
+    return headers
+
+def _build_blocks(ws):
+    """
+    縦に並ぶ「ページ」をブロックとして抽出する
+    block = {header_row, start_row, end_row, code_to_col, day_to_row, day_rows}
+    """
+    header_rows = _find_header_rows(ws, min_codes=6)
+    blocks = []
+
+    for i, hr in enumerate(header_rows):
+        start_row = hr + 1
+        end_row = (header_rows[i+1] - 1) if i+1 < len(header_rows) else ws.max_row
+
+        # そのヘッダ行の code -> col
+        code_to_col = {}
+        for c in range(1, ws.max_column + 1):
+            v = ws.cell(hr, c).value
+            if _is_code_cell(v):
+                code_to_col[v.strip()] = c
+
+        # ブロック内の日付行（A列 or I列が数字）
+        day_to_row = {}
+        day_rows = []
+        for r in range(start_row, end_row + 1):
+            a = ws.cell(r, 1).value   # A列（日）
+            i9 = ws.cell(r, 9).value  # I列（日）
+            if _is_day_cell(a):
+                day = int(str(a).strip())
+                day_to_row[day] = r
+                day_rows.append(r)
+            elif _is_day_cell(i9):
+                day = int(str(i9).strip())
+                day_to_row[day] = r
+                day_rows.append(r)
+
+        blocks.append({
+            "header_row": hr,
+            "start_row": start_row,
+            "end_row": end_row,
+            "code_to_col": code_to_col,
+            "day_to_row": day_to_row,
+            "day_rows": day_rows,
+        })
+
+    return blocks
+JP_WEEK = ["月","火","水","木","金","土","日"]
+FILL_SAT = PatternFill("solid", fgColor="FFF200")
+FILL_SUN = PatternFill("solid", fgColor="FF4D4D")
+FILL_NONE = PatternFill(fill_type=None)
+
+def fill_template_dates_for_blocks(ws, blocks, start_d, end_d, title_text=None):
+    # 期間の日付リスト
+    days = []
+    cur = start_d
+    while cur <= end_d:
+        days.append(cur)
+        cur = cur.fromordinal(cur.toordinal() + 1)
+
+    def fill_for(d):
+        wd = d.weekday()
+        if wd == 5: return FILL_SAT  # 土
+        if wd == 6: return FILL_SUN  # 日
+        return FILL_NONE
+
+    for b in blocks:
+        # タイトル（ブロックごとに左/右にある想定：A{header_row}, I{header_row}）
+        if title_text:
+            ws.cell(b["header_row"], 1).value = title_text
+            ws.cell(b["header_row"], 9).value = title_text
+
+        rows = b["day_rows"]
+        k = min(len(rows), len(days))
+
+        # 期間内を埋める
+        for idx in range(k):
+            r = rows[idx]
+            d = days[idx]
+            w = JP_WEEK[d.weekday()]
+            f = fill_for(d)
+
+            # 左（日・曜）
+            ws.cell(r, 1).value = d.day
+            ws.cell(r, 2).value = w
+            ws.cell(r, 1).fill = f
+            ws.cell(r, 2).fill = f
+
+            # 右（日・曜）
+            ws.cell(r, 9).value = d.day
+            ws.cell(r, 10).value = w
+            ws.cell(r, 9).fill = f
+            ws.cell(r, 10).fill = f
+
+        # 余り行をクリア（そのブロックのコード列も消す）
+        codes_cols = list(b["code_to_col"].values())
+        for idx in range(k, len(rows)):
+            r = rows[idx]
+            # 日・曜を消す
+            for c in (1,2,9,10):
+                ws.cell(r, c).value = None
+                ws.cell(r, c).fill = FILL_NONE
+
+            # ★その日のスタッフ欄（このブロックが担当するコード列だけ）を消す
+            for col in codes_cols:
+                ws.cell(r, col).value = None       # 勤務
+                ws.cell(r+1, col).value = None     # レジ
+
+
+def _build_export_matrix(start_d, end_d):
+    """
+    DBから確定シフトを取得して
+    {day(int): {code: {'shift': str, 'regs': str}}} を作る
+    """
+    qs = (
+        ShiftPreference.objects
+        .select_related('staff')
+        .filter(date__gte=start_d, date__lte=end_d)
+        .filter(confirmed_starttime__isnull=False, confirmed_endtime__isnull=False)
+    )
+
+    # レジ割当もまとめて取る（related_name='register_assignments'）
+    qs = qs.prefetch_related('register_assignments')
+
+    matrix = {}  # day -> code -> {shift, regs}
+    missing_codes = set()
+
+    for sh in qs:
+        code = (sh.staff.excel_code or '').strip() if sh.staff else ''
+        if not code:
+            missing_codes.add(sh.staff_id)
+            continue
+
+        day = sh.date.day
+        matrix.setdefault(day, {})
+        matrix[day].setdefault(code, {"shift": "", "regs": ""})
+
+        # 1日1本が基本なので上書きOK（複数が来たら改行で足す等に拡張可）
+        matrix[day][code]["shift"] = _fmt_shift_range(sh.confirmed_starttime, sh.confirmed_endtime)
+
+        regs = list(sh.register_assignments.all())
+        matrix[day][code]["regs"] = _fmt_regs(regs)
+
+    return matrix, missing_codes
+
+@user_passes_test(lambda u: u.is_superuser)
+def excel_export_dashboard(request):
+    # デフォルト期間：今日〜今日（必要なら期間候補に合わせて変えてOK）
+    start_str = request.GET.get('start')
+    end_str = request.GET.get('end')
+    start_d = parse_date(start_str) if start_str else None
+    end_d = parse_date(end_str) if end_str else None
+    if not start_d or not end_d:
+        today = dt_date.today()
+        start_d = start_d or today
+        end_d = end_d or today
+
+    # staffフォームセット
+    staff_qs = Staff.objects.order_by('id')
+    formset = StaffExcelCodeFormSet(queryset=staff_qs)
+
+    upload_form = ExcelTemplateUploadForm()
+
+    preview = None
+    template_codes = []
+
+    # テンプレから利用可能コードを読む（表示用）
+    template_path = _get_latest_template_path()
+    if template_path:
+        wb = openpyxl.load_workbook(template_path)
+        ws = wb.active
+        blocks = _build_blocks(ws)
+
+        # 全ブロックのコードを集める（重複はsetで潰す）
+        all_codes = []
+        seen = set()
+        for b in blocks:
+            for code in b["code_to_col"].keys():
+                if code not in seen:
+                    seen.add(code)
+                    all_codes.append(code)
+
+        template_codes = all_codes  # 並び順をテンプレの並びに合わせたいのでsortedしない
+    else:
+        messages.warning(request, "テンプレが未設定です（デフォルトテンプレのパスも未設定）。")
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+
+        # 期間
+        sd = request.POST.get('start_date')
+        ed = request.POST.get('end_date')
+
+        if sd:
+            start_d = parse_date(sd)
+        if ed:
+            end_d = parse_date(ed)
+
+
+        if action == 'upload_template':
+            upload_form = ExcelTemplateUploadForm(request.POST, request.FILES)
+            if upload_form.is_valid():
+                upload_form.save()
+                messages.success(request, "テンプレをアップロードしました。")
+            else:
+                messages.error(request, "テンプレのアップロードに失敗しました。xlsxを選んでください。")
+
+        elif action == 'save_codes':
+            formset = StaffExcelCodeFormSet(request.POST, queryset=staff_qs)
+            print("POST keys:", list(request.POST.keys())[:50])  # 追加
+            print("TOTAL_FORMS:", request.POST.get("form-TOTAL_FORMS"))  # 追加
+            print("SAMPLE excel_code:", request.POST.get("form-0-excel_code"), request.POST.get("form-1-excel_code"))
+
+            if formset.is_valid():
+                print("CLEANED:", [f.cleaned_data.get("excel_code") for f in formset])  # 追加
+                
+                # 重複チェック（空欄は無視）
+                codes = []
+                for f in formset:
+                    code = (f.cleaned_data.get('excel_code') or '').strip()
+                    if code:
+                        codes.append(code)
+                dup = {c for c in codes if codes.count(c) > 1}
+                if dup:
+                    messages.error(request, f"excel_code が重複しています: {', '.join(sorted(dup))}")
+                else:
+                    formset.save()
+                    print("action:", request.POST.get("action"))
+                    print("TOTAL:", request.POST.get("form-TOTAL_FORMS"))
+                    print("HAS 23:", "form-23-excel_code" in request.POST)
+                    print("HAS 0 :", "form-0-excel_code" in request.POST)
+                    messages.success(request, "スタッフの列割当を保存しました。")
+                    return redirect('shiftgenerator:excel-export')
+            else:
+                print("ERRORS:", formset.errors)  # 追加
+                # messages.error(request, "入力にエラーがあります（a〜zの小文字で入力）。")
+                messages.error(request, f"入力エラー: {formset.errors}")
+
+
+        elif action in ('preview', 'download'):
+            # テンプレ必須
+            template_path = _get_latest_template_path()
+            if not template_path:
+                messages.error(request, "テンプレが未設定です。先にアップロードしてください。")
+            else:
+                # マトリクス生成
+                matrix, missing = _build_export_matrix(start_d, end_d)
+                if missing:
+                    messages.warning(request, f"excel_code 未設定のスタッフがいます（staff_id）: {sorted(list(missing))}")
+
+                wb = openpyxl.load_workbook(template_path)
+                ws = wb.active
+
+                blocks = _build_blocks(ws)  # ★追加
+
+                # 全コードを template順で抽出
+                seen = set()
+                template_codes = []
+                for b in blocks:
+                    for code in b["code_to_col"].keys():
+                        if code not in seen:
+                            seen.add(code)
+                            template_codes.append(code)
+
+
+                # --- プレビューを作る（get_item不要版） ---
+                preview_days = []
+                cur = start_d
+                while cur <= end_d:
+                    preview_days.append(cur.day)
+                    cur = cur.fromordinal(cur.toordinal() + 1)
+
+                rows = []
+                for day in preview_days:
+                    work_cells = []
+                    reg_cells = []
+                    for code in template_codes:
+                        cell = matrix.get(day, {}).get(code, {"shift": "", "regs": ""})
+                        work_cells.append(cell.get("shift", ""))
+                        reg_cells.append(cell.get("regs", ""))
+                    rows.append({
+                        "day": day,
+                        "work_cells": work_cells,
+                        "reg_cells": reg_cells,
+                    })
+
+                preview = {
+                    "codes": template_codes,
+                    "rows": rows,
+                    "start": start_d,
+                    "end": end_d,
+                }
+
+
+                if action == 'download':
+                    # 0) ブロック抽出（a〜m / o〜aa / ab〜… を全部拾う）
+                    blocks = _build_blocks(ws)
+
+                    # 1) タイトルを作る（あなたの表記に合わせる）
+                    half = "前半" if start_d.day <= 15 else "後半"
+                    title = f"{start_d.year%100}.{start_d.month}月{half}"
+
+                    # 2) 全ブロックの日付・土日色・余りクリア・タイトル更新
+                    fill_template_dates_for_blocks(ws, blocks, start_d, end_d, title_text=title)
+                    blocks = _build_blocks(ws)  # 再構築
+
+                    # 3) code -> (block, col) の索引を作る
+                    code_index = {}
+                    for b in blocks:
+                        for code, col in b["code_to_col"].items():
+                            code_index[code] = (b, col)
+                    
+                    print("=== DEBUG SUMMARY ===")
+                    print("MATRIX days:", sorted(matrix.keys()), " total:", len(matrix))
+                    print("BLOCKS:", len(blocks))
+                    print("CODE_INDEX keys sample:", list(code_index.keys())[:20])
+
+
+                    # 4) シフトを書き込み（codeごとに該当ブロックへ）
+                    miss_code = 0
+                    miss_day  = 0
+                    written   = 0
+
+                    for day, per_code in matrix.items():
+                        for code, payload in per_code.items():
+                            hit = code_index.get(code)
+                            if not hit:
+                                miss_code += 1
+                                print("MISS CODE:", code)
+                                continue
+
+                            b, col = hit
+                            r = b["day_to_row"].get(day)
+                            if not r:
+                                miss_day += 1
+                                print("MISS DAY:", day, "in block", b.get("name", "?"))
+                                continue
+
+                            ws.cell(r, col).value = payload["shift"]
+                            ws.cell(r, col).alignment = Alignment(
+                                horizontal="center",
+                                vertical="center"
+                            )
+                            ws.cell(r + 1, col).value = payload["regs"]
+                            ws.cell(r + 1, col).alignment = Alignment(
+                                horizontal="center",
+                                vertical="center",
+                                wrap_text=True
+                            )
+                            written += 1
+
+                    print("=== WRITE RESULT ===")
+                    print("written =", written)
+                    print("miss_code =", miss_code)
+                    print("miss_day =", miss_day)
+
+
+                    # 5) 返却（ここはそのまま）
+                    out = BytesIO()
+                    wb.save(out)
+                    out.seek(0)
+                    filename = f"shift_{start_d.isoformat()}_{end_d.isoformat()}.xlsx"
+                    resp = HttpResponse(
+                        out.getvalue(),
+                        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    resp['Content-Disposition'] = f'attachment; filename="{filename}"'
+                    return resp
+
+
+
+    context = {
+        "formset": formset,
+        "upload_form": upload_form,
+        "preview": preview,
+        "template_codes": template_codes,
+        "start_date": start_d,
+        "end_date": end_d,
+    }
+    return render(request, "shiftgenerator/excel_export_dashboard.html", context)

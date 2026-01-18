@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+
+  <h2 class="mb-3">Excel出力（設定・プレビュー・テンプレ差替え）</h2>
+
+  {% if messages %}
+    {% for m in messages %}
+      <div class="alert alert-{{ m.tags }}">{{ m }}</div>
+    {% endfor %}
+  {% endif %}
+
+  <!-- テンプレ差替え -->
+  <div class="card mb-3">
+    <div class="card-header">① テンプレ差し替え</div>
+    <div class="card-body">
+      <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        {{ upload_form.file }}
+        <button class="btn btn-primary" name="action" value="upload_template">アップロード</button>
+      </form>
+      <small class="text-muted">※ 通常は一度アップロードしたらOK。フォーマット変更時だけ差し替え。</small>
+    </div>
+  </div>
+
+  <!-- 期間 -->
+  <div class="card mb-3">
+    <div class="card-header">② 出力期間</div>
+    <div class="card-body">
+      <form method="post">
+        {% csrf_token %}
+        <div class="form-row">
+          <div class="col">
+            <label>開始日</label>
+            <input type="date" class="form-control" name="start_date" value="{{ start_date|date:'Y-m-d' }}">
+          </div>
+          <div class="col">
+            <label>終了日</label>
+            <input type="date" class="form-control" name="end_date" value="{{ end_date|date:'Y-m-d' }}">
+          </div>
+        </div>
+        <div class="mt-2">
+          <button class="btn btn-outline-secondary" name="action" value="preview">プレビュー更新</button>
+          <button class="btn btn-success" name="action" value="download">Excelダウンロード</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 割当 -->
+  <div class="card mb-3">
+    <div class="card-header">③ スタッフ → Excel列コード割当（a〜）</div>
+    <div class="card-body">
+        <form method="post">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="save_codes">
+
+        {{ formset.management_form }}
+
+        <table class="table table-sm table-bordered">
+            <thead class="thead-light">
+            <tr>
+                <th>staff_id</th>
+                <th>表示名</th>
+                <th>excel_code</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for f in formset %}
+            <tr>
+                <td>{{ f.instance.id }}</td>
+                <td>{{ f.instance.name }}</td>
+                <td>
+                {{ f.id }}
+                {{ f.excel_code }}
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+
+        <button class="btn btn-primary" type="submit">割当を保存</button>
+        </form>
+    </div>
+  </div>
+
+  <!-- プレビュー -->
+  {% if preview %}
+<div class="card mb-5">
+  <div class="card-header">④ プレビュー（{{ preview.start }} 〜 {{ preview.end }}）</div>
+  <div class="card-body" style="overflow:auto;">
+    <table class="table table-sm table-bordered text-center" style="min-width: 900px;">
+      <thead class="thead-light">
+        <tr>
+          <th>日</th>
+          {% for code in preview.codes %}
+            <th>{{ code }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+
+      <tbody>
+        {% for r in preview.rows %}
+          <tr>
+            <th>{{ r.day }}（勤務）</th>
+            {% for v in r.work_cells %}
+              <td style="white-space:pre-line;">{{ v }}</td>
+            {% endfor %}
+          </tr>
+
+          <tr>
+            <th>{{ r.day }}（レジ）</th>
+            {% for v in r.reg_cells %}
+              <td style="white-space:pre-line;">{{ v }}</td>
+            {% endfor %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+
+</div>
+{% endblock %}

@@ -3,6 +3,8 @@ from django import forms
 from django.contrib.auth.forms import UserCreationForm
 from .models import CustomUser, Staff
 from .models import ShiftPreference
+from django.forms import modelformset_factory
+from .models import Staff, ExcelExportTemplate
 
 class ShiftPreferenceForm(forms.ModelForm):
     class Meta:
@@ -36,3 +38,15 @@ class CustomUserCreationForm(UserCreationForm):
                 custom_user=user
             )
         return user
+
+
+class ExcelTemplateUploadForm(forms.ModelForm):
+    class Meta:
+        model = ExcelExportTemplate
+        fields = ['file']
+
+StaffExcelCodeFormSet = modelformset_factory(
+    Staff,
+    fields=('excel_code',),
+    extra=0
+)
