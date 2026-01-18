@@ -2,6 +2,66 @@
 {% block content %}
 <div class="container mt-4">
 
+<style>
+  /* 行全体を薄く */
+  .row-work td, .row-work th,
+  .row-reg  td, .row-reg  th {
+    background-clip: padding-box;
+  }
+  /* 縦線を濃く */
+  table.table-bordered td,
+  table.table-bordered th {
+  border-left: 1px dotted rgba(0, 0, 0, 0.35);
+  border-right: 1px dotted rgba(0, 0, 0, 0.35);
+}
+
+
+  /* 土：黄色 */
+  .row-sat td, .row-sat th {
+    background-color: rgba(255, 242, 0, 0.25) !important;
+  }
+
+  /* 日：赤 */
+  .row-sun td, .row-sun th {
+    background-color: rgba(255, 77, 77, 0.20) !important;
+  }
+
+  /* （任意）勤務行だけ少し濃くして区別 */
+  .row-work td, .row-work th {
+    border-top-width: 3px;
+  }
+
+  /* ===== 平日：ゼブラ（超薄グレー） ===== */
+  /* 1日2行（勤務＋レジ）を1セットとして交互に */
+  tbody tr.row-work:nth-of-type(4n+1) td,
+  tbody tr.row-work:nth-of-type(4n+1) th,
+  tbody tr.row-reg:nth-of-type(4n+2) td,
+  tbody tr.row-reg:nth-of-type(4n+2) th {
+    background-color: rgba(0, 0, 0, 0.03);
+  }
+
+  tbody tr.row-work:nth-of-type(4n+3) td,
+  tbody tr.row-work:nth-of-type(4n+3) th,
+  tbody tr.row-reg:nth-of-type(4n+4) td,
+  tbody tr.row-reg:nth-of-type(4n+4) th {
+    background-color: rgba(0, 0, 0, 0.00);
+  }
+
+  /* ===== 土日（ゼブラより優先） ===== */
+  .row-sat td, .row-sat th {
+    background-color: rgba(255, 242, 0, 0.25) !important;
+  }
+  .row-sun td, .row-sun th {
+    background-color: rgba(255, 77, 77, 0.20) !important;
+  }
+
+  /* 見出しを少し強調 */
+  .row-work th { font-weight: 700; }
+  .row-reg  th { font-weight: 600; opacity: 0.9; }
+  
+</style>
+
+
   <h2 class="mb-3">Excel出力（設定・プレビュー・テンプレ差替え）</h2>
 
   {% if messages %}
@@ -10,117 +70,195 @@
     {% endfor %}
   {% endif %}
 
-  <!-- テンプレ差替え -->
-  <div class="card mb-3">
-    <div class="card-header">① テンプレ差し替え</div>
-    <div class="card-body">
-      <form method="post" enctype="multipart/form-data">
-        {% csrf_token %}
-        {{ upload_form.file }}
-        <button class="btn btn-primary" name="action" value="upload_template">アップロード</button>
-      </form>
-      <small class="text-muted">※ 通常は一度アップロードしたらOK。フォーマット変更時だけ差し替え。</small>
-    </div>
-  </div>
+  <!-- ===================== 大タブ（①〜④） ===================== -->
+  <ul class="nav nav-tabs nav-fill" id="mainTabs" role="tablist">
+    <li class="nav-item">
+      <a class="nav-link active" id="main-1-tab" data-toggle="tab" href="#main-1" role="tab"
+         aria-controls="main-1" aria-selected="true">
+        ① テンプレ
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link" id="main-2-tab" data-toggle="tab" href="#main-2" role="tab"
+         aria-controls="main-2" aria-selected="false">
+        ② 期間
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link" id="main-3-tab" data-toggle="tab" href="#main-3" role="tab"
+         aria-controls="main-3" aria-selected="false">
+        ③ 割当
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link" id="main-4-tab" data-toggle="tab" href="#main-4" role="tab"
+         aria-controls="main-4" aria-selected="false">
+        ④ プレビュー
+      </a>
+    </li>
+  </ul>
 
-  <!-- 期間 -->
-  <div class="card mb-3">
-    <div class="card-header">② 出力期間</div>
-    <div class="card-body">
-      <form method="post">
-        {% csrf_token %}
-        <div class="form-row">
-          <div class="col">
-            <label>開始日</label>
-            <input type="date" class="form-control" name="start_date" value="{{ start_date|date:'Y-m-d' }}">
-          </div>
-          <div class="col">
-            <label>終了日</label>
-            <input type="date" class="form-control" name="end_date" value="{{ end_date|date:'Y-m-d' }}">
-          </div>
+  <div class="tab-content border border-top-0 p-3" id="mainTabContent">
+
+    <!-- ============ ① テンプレ差替え ============ -->
+    <div class="tab-pane fade show active" id="main-1" role="tabpanel" aria-labelledby="main-1-tab">
+      <div class="card">
+        <div class="card-header">① テンプレ差し替え</div>
+        <div class="card-body">
+          <form method="post" enctype="multipart/form-data">
+            {% csrf_token %}
+            {{ upload_form.file }}
+            <button class="btn btn-primary" name="action" value="upload_template">アップロード</button>
+          </form>
+          <small class="text-muted">※ 通常は一度アップロードしたらOK。フォーマット変更時だけ差し替え。</small>
         </div>
-        <div class="mt-2">
-          <button class="btn btn-outline-secondary" name="action" value="preview">プレビュー更新</button>
-          <button class="btn btn-success" name="action" value="download">Excelダウンロード</button>
+      </div>
+    </div>
+
+    <!-- ============ ② 出力期間 ============ -->
+    <div class="tab-pane fade" id="main-2" role="tabpanel" aria-labelledby="main-2-tab">
+      <div class="card">
+        <div class="card-header">② 出力期間</div>
+        <div class="card-body">
+          <form method="post">
+            {% csrf_token %}
+            <div class="form-row">
+              <div class="col">
+                <label>開始日</label>
+                <input type="date" class="form-control" name="start_date" value="{{ start_date|date:'Y-m-d' }}">
+              </div>
+              <div class="col">
+                <label>終了日</label>
+                <input type="date" class="form-control" name="end_date" value="{{ end_date|date:'Y-m-d' }}">
+              </div>
+            </div>
+            <div class="mt-2">
+              <button class="btn btn-outline-secondary" name="action" value="preview">プレビュー更新</button>
+              <button class="btn btn-success" name="action" value="download">Excelダウンロード</button>
+            </div>
+          </form>
         </div>
-      </form>
+      </div>
     </div>
-  </div>
 
-  <!-- 割当 -->
-  <div class="card mb-3">
-    <div class="card-header">③ スタッフ → Excel列コード割当（a〜）</div>
-    <div class="card-body">
-        <form method="post">
-        {% csrf_token %}
-        <input type="hidden" name="action" value="save_codes">
+    <!-- ============ ③ 割当 ============ -->
+    <div class="tab-pane fade" id="main-3" role="tabpanel" aria-labelledby="main-3-tab">
+      <div class="card">
+        <div class="card-header">③ スタッフ → Excel列コード割当（a〜）</div>
+        <div class="card-body">
+          <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="save_codes">
+            {{ formset.management_form }}
 
-        {{ formset.management_form }}
+            <table class="table table-sm table-bordered">
+              <thead class="thead-light">
+                <tr>
+                  <th>staff_id</th>
+                  <th>表示名</th>
+                  <th style="width:140px;">excel_code</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for f in formset %}
+                <tr>
+                  <td>{{ f.instance.id }}</td>
+                  <td>{{ f.instance.name }}</td>
+                  <td>
+                    {{ f.id }}
+                    {{ f.excel_code }}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
 
-        <table class="table table-sm table-bordered">
-            <thead class="thead-light">
-            <tr>
-                <th>staff_id</th>
-                <th>表示名</th>
-                <th>excel_code</th>
-            </tr>
-            </thead>
-            <tbody>
-            {% for f in formset %}
-            <tr>
-                <td>{{ f.instance.id }}</td>
-                <td>{{ f.instance.name }}</td>
-                <td>
-                {{ f.id }}
-                {{ f.excel_code }}
-                </td>
-            </tr>
-            {% endfor %}
-            </tbody>
-        </table>
-
-        <button class="btn btn-primary" type="submit">割当を保存</button>
-        </form>
+            <button class="btn btn-primary" type="submit">割当を保存</button>
+          </form>
+        </div>
+      </div>
     </div>
+
+    <!-- ============ ④ プレビュー ============ -->
+    <div class="tab-pane fade" id="main-4" role="tabpanel" aria-labelledby="main-4-tab">
+      <div class="card">
+        <div class="card-header">④ プレビュー（{{ preview.start|default:"" }} 〜 {{ preview.end|default:"" }}）</div>
+        <div class="card-body">
+
+          {% if preview and preview.pages %}
+            <!-- 内側タブ（ページ切替） -->
+            <ul class="nav nav-tabs" id="previewTabs" role="tablist">
+              {% for p in preview.pages %}
+                <li class="nav-item">
+                  <a class="nav-link {% if forloop.first %}active{% endif %}"
+                     id="tab-{{ forloop.counter }}"
+                     data-toggle="tab"
+                     href="#pane-{{ forloop.counter }}"
+                     role="tab"
+                     aria-controls="pane-{{ forloop.counter }}"
+                     aria-selected="{% if forloop.first %}true{% else %}false{% endif %}">
+                    {{ p.title }}
+                  </a>
+                </li>
+              {% endfor %}
+            </ul>
+
+            <div class="tab-content border border-top-0 p-3" id="previewTabContent">
+              {% for p in preview.pages %}
+                <div class="tab-pane fade {% if forloop.first %}show active{% endif %}"
+                     id="pane-{{ forloop.counter }}"
+                     role="tabpanel"
+                     aria-labelledby="tab-{{ forloop.counter }}">
+
+                  <div style="overflow:auto;">
+                    <table class="table table-sm table-bordered text-center" style="min-width: 900px;">
+                      <thead class="thead-light">
+                        <tr>
+                            <th style="min-width:120px;">日(曜)</th>
+                            {% for code in p.codes %}
+                            <th style="min-width:70px;">{{ code }}</th>
+                            {% endfor %}
+                        </tr>
+                        </thead>
+
+
+                      <tbody>
+                        {% for r in p.rows %}
+                            <tr class="row-work {% if r.weekday == 5 %}row-sat{% elif r.weekday == 6 %}row-sun{% endif %}">
+                            <th>{{ r.day }}（{{ r.wlabel }}）勤務</th>
+                            {% for v in r.work_cells %}
+                                <td style="white-space:pre-line;">{{ v }}</td>
+                            {% endfor %}
+                            </tr>
+
+                            <tr class="row-reg {% if r.weekday == 5 %}row-sat{% elif r.weekday == 6 %}row-sun{% endif %}">
+                            <th>{{ r.day }}（{{ r.wlabel }}）レジ</th>
+                            {% for v in r.reg_cells %}
+                                <td style="white-space:pre-line;">{{ v }}</td>
+                            {% endfor %}
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+
+                    </table>
+                  </div>
+
+                </div>
+              {% endfor %}
+            </div>
+
+          {% else %}
+            <div class="text-muted">
+              まだプレビューがありません。②「期間」タブで「プレビュー更新」を押してください。
+            </div>
+          {% endif %}
+
+        </div>
+      </div>
+    </div>
+
   </div>
-
-  <!-- プレビュー -->
-  {% if preview %}
-<div class="card mb-5">
-  <div class="card-header">④ プレビュー（{{ preview.start }} 〜 {{ preview.end }}）</div>
-  <div class="card-body" style="overflow:auto;">
-    <table class="table table-sm table-bordered text-center" style="min-width: 900px;">
-      <thead class="thead-light">
-        <tr>
-          <th>日</th>
-          {% for code in preview.codes %}
-            <th>{{ code }}</th>
-          {% endfor %}
-        </tr>
-      </thead>
-
-      <tbody>
-        {% for r in preview.rows %}
-          <tr>
-            <th>{{ r.day }}（勤務）</th>
-            {% for v in r.work_cells %}
-              <td style="white-space:pre-line;">{{ v }}</td>
-            {% endfor %}
-          </tr>
-
-          <tr>
-            <th>{{ r.day }}（レジ）</th>
-            {% for v in r.reg_cells %}
-              <td style="white-space:pre-line;">{{ v }}</td>
-            {% endfor %}
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
-{% endif %}
-
+  <!-- ===================== /大タブ ===================== -->
 
 </div>
 {% endblock %}

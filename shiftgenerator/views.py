@@ -2301,32 +2301,51 @@ def excel_export_dashboard(request):
 
 
                 # --- プレビューを作る（get_item不要版） ---
-                preview_days = []
+                # 期間の日付（dayだけ）一覧
+                preview_dates = []
                 cur = start_d
                 while cur <= end_d:
-                    preview_days.append(cur.day)
+                    preview_dates.append(cur)  # date オブジェクト
                     cur = cur.fromordinal(cur.toordinal() + 1)
 
-                rows = []
-                for day in preview_days:
-                    work_cells = []
-                    reg_cells = []
-                    for code in template_codes:
-                        cell = matrix.get(day, {}).get(code, {"shift": "", "regs": ""})
-                        work_cells.append(cell.get("shift", ""))
-                        reg_cells.append(cell.get("regs", ""))
-                    rows.append({
-                        "day": day,
-                        "work_cells": work_cells,
-                        "reg_cells": reg_cells,
+
+                pages = []
+                for idx, b in enumerate(blocks, start=1):
+                    # このブロック内の codes を「ヘッダ列順」に並べる
+                    codes = [code for code, _col in sorted(b["code_to_col"].items(), key=lambda x: x[1])]
+
+                    rows = []
+                    for d in preview_dates:
+                        day = d.day
+                        wd = d.weekday()  # 0..6
+                        wlabel = JP_WEEK[wd]  # ["月","火",...]
+                        work_cells = []
+                        reg_cells = []
+                        for code in codes:
+                            cell = matrix.get(day, {}).get(code, {"shift": "", "regs": ""})
+                            work_cells.append(cell.get("shift", ""))
+                            reg_cells.append(cell.get("regs", ""))
+                        rows.append({
+                            "day": day,
+                            "weekday": wd,
+                            "wlabel": wlabel,
+                            "work_cells": work_cells,
+                            "reg_cells": reg_cells,
+                        })
+
+
+                    pages.append({
+                        "title": f"{idx}ページ目（{codes[0]}〜{codes[-1]}）" if codes else f"{idx}ページ目",
+                        "codes": codes,
+                        "rows": rows,
                     })
 
                 preview = {
-                    "codes": template_codes,
-                    "rows": rows,
                     "start": start_d,
                     "end": end_d,
+                    "pages": pages,
                 }
+
 
 
                 if action == 'download':
@@ -2347,30 +2366,18 @@ def excel_export_dashboard(request):
                         for code, col in b["code_to_col"].items():
                             code_index[code] = (b, col)
                     
-                    print("=== DEBUG SUMMARY ===")
-                    print("MATRIX days:", sorted(matrix.keys()), " total:", len(matrix))
-                    print("BLOCKS:", len(blocks))
-                    print("CODE_INDEX keys sample:", list(code_index.keys())[:20])
-
-
                     # 4) シフトを書き込み（codeごとに該当ブロックへ）
-                    miss_code = 0
-                    miss_day  = 0
-                    written   = 0
-
                     for day, per_code in matrix.items():
                         for code, payload in per_code.items():
                             hit = code_index.get(code)
                             if not hit:
                                 miss_code += 1
-                                print("MISS CODE:", code)
                                 continue
 
                             b, col = hit
                             r = b["day_to_row"].get(day)
                             if not r:
                                 miss_day += 1
-                                print("MISS DAY:", day, "in block", b.get("name", "?"))
                                 continue
 
                             ws.cell(r, col).value = payload["shift"]
@@ -2384,14 +2391,7 @@ def excel_export_dashboard(request):
                                 vertical="center",
                                 wrap_text=True
                             )
-                            written += 1
-
-                    print("=== WRITE RESULT ===")
-                    print("written =", written)
-                    print("miss_code =", miss_code)
-                    print("miss_day =", miss_day)
-
-
+                    
                     # 5) 返却（ここはそのまま）
                     out = BytesIO()
                     wb.save(out)
