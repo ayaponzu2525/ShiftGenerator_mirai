@@ -30,8 +30,9 @@ from django.contrib import messages
 from django.db.models import Exists, OuterRef, Q
 from shiftgenerator.utils.utils import close_expired_periods
 
-
-
+# === 店舗営業時間（バックエンド側） ===
+BUSINESS_OPEN_TIME = time(8, 0)   # 08:00
+BUSINESS_CLOSE_TIME = time(20, 0) # 20:00
 
 
 def index(request):
@@ -457,7 +458,32 @@ def save_shift_and_registers(request):
         except DayOfWeek.DoesNotExist:
             return None  # day_of_week が必須ならここで ValidationError を返す運用でもOK
 
+    # === 営業時間にシフト時間を丸める（サーバー側） ===
+    def clamp_shift_times_to_business_hours(start_time, end_time):
+        """
+        start_time, end_time: datetime.time
+        戻り値: (clamped_start, clamped_end)
+        """
+        if start_time is None or end_time is None:
+            return start_time, end_time
 
+        # まず単純に 8:00〜20:00 に切り詰める
+        s = max(start_time, BUSINESS_OPEN_TIME)
+        e = min(end_time,   BUSINESS_CLOSE_TIME)
+
+        # 万一 0分以下になった場合の保険（普通の操作ではほぼ来ない前提）
+        if e <= s:
+            base_date = date.today()
+            # とりあえず「1時間だけ確保」しておく
+            s_dt = datetime.combine(base_date, s)
+            e_dt = s_dt + timedelta(hours=1)
+            # 20:00 を超えないように再度 clamp
+            if e_dt.time() > BUSINESS_CLOSE_TIME:
+                e_dt = datetime.combine(base_date, BUSINESS_CLOSE_TIME)
+                s_dt = e_dt - timedelta(hours=1)
+            s, e = s_dt.time(), e_dt.time()
+
+        return s, e
     try:
         with transaction.atomic():
             touched_shift_ids = set()
@@ -488,6 +514,9 @@ def save_shift_and_registers(request):
                     shift_date = start_dt.date()
                     start_time = start_dt.time()
                     end_time = end_dt.time()
+                    
+                    # ★ サーバー側でも営業時間に自動クランプ
+                    start_time, end_time = clamp_shift_times_to_business_hours(start_time, end_time)
 
                 new_staff = item.get('group')
                 if new_staff is not None:
@@ -1136,6 +1165,85 @@ def shift_calendar_view(request):
     # テンプレートをカレンダー用に（新ファイルに）
     return render(request, 'shiftgenerator/shift_calendar_view.html', context)
 
+@require_GET
+def api_shift_items(request):
+    """指定日のシフト(items)・レジ(items)・希望(wish)を返す"""
+    date_str = request.GET.get('date')
+    target_date = parse_date(date_str) if date_str else timezone.localdate()
+    if target_date is None:
+        target_date = timezone.localdate()
+
+    # --- 確定シフト ---
+    preferences = ShiftPreference.objects.filter(
+        date=target_date,
+        confirmed_starttime__isnull=False,
+        confirmed_endtime__isnull=False
+    )
+
+    # --- 希望シフト ---
+    wish_preferences = ShiftPreference.objects.filter(
+        date=target_date,
+        starttime__isnull=False,
+        endtime__isnull=False
+    )
+
+    # --- レジ割当（★ここ重要：日付で絞る） ---
+    register_assignments = ShiftRegisterAssignment.objects.filter(
+        shift__date=target_date
+    )
+
+    shift_items = []
+    for p in preferences:
+        shift_items.append({
+            "id": p.id,
+            "content": f"{p.confirmed_starttime.strftime('%H:%M')}-{p.confirmed_endtime.strftime('%H:%M')}",
+            "start": datetime.combine(p.date, p.confirmed_starttime).isoformat(),
+            "end": datetime.combine(p.date, p.confirmed_endtime).isoformat(),
+            "group": p.staff.id,
+            "type": "range",
+            "is_shift": True,
+            "is_reg": False,
+        })
+
+    reg_items = []
+    for reg in register_assignments:
+        reg_start = datetime.combine(reg.shift.date, reg.register_start_time)
+        reg_end   = datetime.combine(reg.shift.date, reg.register_end_time)
+        reg_items.append({
+            "id": f"reg-{reg.id}",
+            "group": reg.shift.staff.id,
+            "content": reg.get_register_display() if hasattr(reg, "get_register_display") else f"レジ{reg.register_number}",
+            "start": reg_start.isoformat(),
+            "end": reg_end.isoformat(),
+            "type": "range",
+            "editable": False,
+            "className": f"register-item reg{reg.register_number}",
+            "shift_id": reg.shift.id,
+            "register_number": reg.register_number,
+            "is_shift": False,
+            "is_reg": True,
+        })
+
+    wish_items = []
+    for w in wish_preferences:
+        wish_items.append({
+            "id": f"wish-{w.id}",
+            "content": "",
+            "start": datetime.combine(w.date, w.starttime).isoformat(),
+            "end": datetime.combine(w.date, w.endtime).isoformat(),
+            "group": w.staff.id,
+            "type": "background",
+            "className": "wish-item",
+            "is_shift": False,
+            "is_reg": False,
+        })
+
+    return JsonResponse({
+        "date": target_date.strftime("%Y-%m-%d"),
+        "items": shift_items + reg_items + wish_items
+    })
+
+
 @superuser_required
 def shift_management(request):
     date_str = request.GET.get('date')
@@ -1192,7 +1300,9 @@ def shift_management(request):
         preference.confirmed_starttime = datetime.combine(preference.date, preference.confirmed_starttime)
         preference.confirmed_endtime = datetime.combine(preference.date, preference.confirmed_endtime)
 
-    register_assignments = ShiftRegisterAssignment.objects.all()
+    register_assignments = ShiftRegisterAssignment.objects.filter(
+        shift__date=target_date
+    )
     register_data = []
     for reg in register_assignments:
         # reg.register_start_time と reg.register_end_time は TimeField

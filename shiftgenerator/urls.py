@@ -40,7 +40,7 @@ urlpatterns = [
     path('delete-register-assignment/', views.delete_register_assignment, name='delete-register-assignment'),
     path('get-register-assignments/', views.get_register_assignments, name='get-register-assignments'),
     path('save-shift-and-registers/', views.save_shift_and_registers, name='save-shift-and-registers'),
-
+    path('api/shift-items/', views.api_shift_items, name='api-shift-items'),
     
     path('staff-management/', views.staff_management, name='staff-management'),
     path('bulk-reset-to-wish/', views.bulk_reset_to_wish, name='bulk-reset-to-wish'),

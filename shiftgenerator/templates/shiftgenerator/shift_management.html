@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+
 <head>
   <meta charset="UTF-8">
   <title>シフト管理（編集モード）</title>
@@ -16,25 +17,30 @@
       flex-wrap: wrap;
       gap: 10px;
     }
+
     .card-body {
       padding: 0;
     }
+
     #timeline {
       position: relative;
       width: 100%;
     }
+
     #summaryTable th,
     #summaryTable td {
       min-width: 80px;
-      box-sizing: border-box; /* ←これを追加！ */
+      box-sizing: border-box;
+      /* ←これを追加！ */
       padding: 0.5rem;
     }
+
     #timeline-wrapper {
       border-top: 1px solid #ccc;
       border-bottom: 1px solid #ccc;
       position: relative;
     }
-    
+
     /* スタッフ名列を固定 */
     .vis-labelset {
       position: sticky;
@@ -42,7 +48,7 @@
       z-index: 10;
       background-color: white;
     }
-    
+
     /* 時間軸を固定するためのスタイル */
     .time-axis-container {
       position: sticky;
@@ -51,19 +57,20 @@
       z-index: 100;
       border-bottom: 1px solid #ddd;
       overflow: hidden;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
     }
-    
+
     /* スクロール同期のための調整 */
     .timeline-scroll-container {
       overflow: auto;
       max-height: 400px;
     }
-    
+
     /* メインのタイムラインの上部に余白を作る */
     .vis-timeline {
       padding-top: 40px;
     }
+
     .staff-label {
       display: inline-block;
       padding: 3px 12px;
@@ -84,35 +91,57 @@
       border-color: #2359a0;
       text-decoration: none;
     }
+
     /* 希望シフトは薄い青色、点線・背景色など */
     .vis-item.wish-item {
       background-color: rgba(110, 220, 160, 0.17) !important;
       border: 2px dashed #62cf97 !important;
-      z-index: 0;  /* 一番奥に */
+      z-index: 0;
+      /* 一番奥に */
     }
 
     .vis-item.new-shift {
-      background-color: #ffc107 !important; /* 黄色 */
+      background-color: #ffc107 !important;
+      /* 黄色 */
       border-color: #e0a800 !important;
       color: #333;
       font-weight: bold;
     }
 
 
-  .register-item {
-    background-color: rgba(255, 165, 0, 0.6); /* オレンジ半透明 */
-    height: 10px !important;
-    border-radius: 4px;
-    margin-top: 15px !important; /* シフトバーに被らないよう少し下げる */
-  }
+    .register-item {
+      background-color: rgba(255, 165, 0, 0.6);
+      /* オレンジ半透明 */
+      height: 10px !important;
+      border-radius: 4px;
+      margin-top: 15px !important;
+      /* シフトバーに被らないよう少し下げる */
+    }
 
-  /* レジごとに色分け */
-  .reg1 { background-color: rgba(255, 251, 33, 0.7); }   /* 赤 */
-  .reg2 { background-color: rgba(239, 120, 2, 0.7); }  /* 青 */
-  .reg3 { background-color: rgba(22, 221, 52, 0.7); }  /* 緑 */
-  .reg4 { background-color: rgba(231, 85, 204, 0.7); }  /* 黄 */
+    /* レジごとに色分け */
+    .reg1 {
+      background-color: rgba(255, 251, 33, 0.7);
+    }
+
+    /* 赤 */
+    .reg2 {
+      background-color: rgba(239, 120, 2, 0.7);
+    }
+
+    /* 青 */
+    .reg3 {
+      background-color: rgba(22, 221, 52, 0.7);
+    }
+
+    /* 緑 */
+    .reg4 {
+      background-color: rgba(231, 85, 204, 0.7);
+    }
+
+    /* 黄 */
   </style>
 </head>
+
 <body class="bg-light">
   <div class="container mt-4">
 
@@ -121,124 +150,126 @@
       <!-- 1行目：日付選択とホームボタン -->
       <div class="d-flex justify-content-between align-items-center flex-wrap mb-2">
         <form method="get" class="d-flex align-items-center mb-0 p-0" style="gap:8px;">
-        <div class="d-flex align-items-center">
-          <label for="date" class="mb-0 mr-2">表示する日付：</label>
-          <input type="date" name="date" id="date" value="{{ selected_date|date:'Y-m-d' }}" class="form-control mr-2" style="min-width:140px;max-width:170px;">
-          <button type="submit" class="btn btn-primary">表示</button>
+          <div class="d-flex align-items-center">
+            <label for="date" class="mb-0 mr-2">表示する日付：</label>
+            <input type="date" name="date" id="date" value="{{ selected_date|date:'Y-m-d' }}" class="form-control mr-2"
+              style="min-width:140px;max-width:170px;">
+            <button type="submit" class="btn btn-primary">表示</button>
         </form>
-        </div>
-        <a href="{% url 'shiftgenerator:admin-home' %}" class="btn btn-outline-primary">
-          <i class="fas fa-home mr-2"></i> 管理者ホームに戻る
-        </a>
       </div>
-      <!-- 2行目：反映対象期間 -->
-      <div class="d-flex align-items-center flex-wrap mb-3" style="gap: 20px;">
-        <label class="mb-0 mr-2">反映対象期間：</label>
-        <input type="date" id="startDate" class="form-control mr-2" style="min-width:130px;max-width:170px;">
-        <span class="mx-2">〜</span>
-        <input type="date" id="endDate" class="form-control mr-2" style="min-width:130px;max-width:170px;">
-        <button id="copyShiftsBtn" class="btn btn-success">📋 シフト希望を反映</button>
-        <button id="saveChangesBtn" class="btn btn-primary mr-2">変更を保存</button>
-        <span id="unsavedIndicator" class="badge badge-warning ml-2" style="display:none;">未保存の変更</span>
-        
-      </div>
+      <a href="{% url 'shiftgenerator:admin-home' %}" class="btn btn-outline-primary">
+        <i class="fas fa-home mr-2"></i> 管理者ホームに戻る
+      </a>
     </div>
+    <!-- 2行目：反映対象期間 -->
+    <div class="d-flex align-items-center flex-wrap mb-3" style="gap: 20px;">
+      <label class="mb-0 mr-2">反映対象期間：</label>
+      <input type="date" id="startDate" class="form-control mr-2" style="min-width:130px;max-width:170px;">
+      <span class="mx-2">〜</span>
+      <input type="date" id="endDate" class="form-control mr-2" style="min-width:130px;max-width:170px;">
+      <button id="copyShiftsBtn" class="btn btn-success">📋 シフト希望を反映</button>
+      <button id="saveChangesBtn" class="btn btn-primary mr-2">変更を保存</button>
+      <span id="unsavedIndicator" class="badge badge-warning ml-2" style="display:none;">未保存の変更</span>
 
-    <!-- ナビゲーション -->
-    <div class="btn-group-custom">
-      <button type="button" class="btn btn-outline-secondary" onclick="moveDate(-7)">← 1週間前</button>
-      <button type="button" class="btn btn-outline-secondary" onclick="moveDate(-1)">← 1日前</button>
-      <button type="button" class="btn btn-outline-secondary" onclick="moveDate(1)">1日後 →</button>
-      <button type="button" class="btn btn-outline-secondary" onclick="moveDate(7)">1週間後 →</button>
-    </div>
-
-    <!-- ▼ スタッフ個別反映モーダル  ---------------------------- -->
-    <div class="modal fade" id="staffModal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog modal-dialog-centered modal-sm">
-        <div class="modal-content">
-          <div class="modal-header py-2">
-            <h5 id="staffModalTitle" class="modal-title"></h5>
-            <button type="button" class="close" data-dismiss="modal">&times;</button>
-          </div>
-
-          <div class="modal-body py-3">
-            <div class="form-group mb-2">
-              <label class="mb-0">開始日</label>
-              <input type="date" id="modalStart" class="form-control">
-            </div>
-            <div class="form-group mb-2">
-              <label class="mb-0">終了日</label>
-              <input type="date" id="modalEnd" class="form-control">
-            </div>
-          </div>
-
-          <div class="modal-footer py-2">
-            <button id="modalApply" class="btn btn-sm btn-primary">✅ 反映する</button>
-            <button class="btn btn-sm btn-secondary" data-dismiss="modal">キャンセル</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ▼ レジ割当編集モーダル -->
-    <div class="modal fade" id="registerModal" tabindex="-1" role="dialog" aria-labelledby="registerModalLabel" aria-hidden="true">
-      <div class="modal-dialog" role="document">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title" id="registerModalLabel">レジ割当編集</h5>
-            <button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
-          </div>
-          <div class="modal-body">
-
-            <div class="mb-3">
-              <strong>対象シフト:</strong>
-              <span id="registerShiftInfo"></span>
-            </div>
-
-            <div id="registerList">
-              <!-- 割当リストがここに入る -->
-            </div>
-
-            <button class="btn btn-outline-primary btn-sm mt-2" id="addRegisterBtn">＋ 新規割当</button>
-          </div>
-          <div class="modal-footer">
-            <button id="saveRegisterBtn" class="btn btn-primary">保存</button>
-            <button class="btn btn-secondary" data-dismiss="modal">閉じる</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-
-    <!-- タイムライン表示 -->
-    <div class="card shadow-sm mt-4">
-      <div class="card-body" style="padding: 0;">
-        <!-- 時間軸固定用のコンテナ -->
-        <div class="time-axis-container" id="timeAxisContainer"></div>
-        
-        <!-- スクロール可能なタイムラインコンテナ -->
-        <div class="timeline-scroll-container" id="timeline-wrapper">
-          <div id="timeline"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 時間ごとの合計人数表示 -->
-    <div class="mt-3">
-      <table id="summaryTable" class="table table-sm table-bordered text-center bg-white">
-        <thead class="thead-light">
-          <tr id="summaryHeaderRow"></tr>
-        </thead>
-        <tbody>
-          <tr id="summaryDataRow"></tr>
-        </tbody>
-      </table>
     </div>
   </div>
-    <script>
-    
+
+  <!-- ナビゲーション -->
+  <div class="btn-group-custom">
+    <button type="button" class="btn btn-outline-secondary" onclick="moveDate(-7)">← 1週間前</button>
+    <button type="button" class="btn btn-outline-secondary" onclick="moveDate(-1)">← 1日前</button>
+    <button type="button" class="btn btn-outline-secondary" onclick="moveDate(1)">1日後 →</button>
+    <button type="button" class="btn btn-outline-secondary" onclick="moveDate(7)">1週間後 →</button>
+  </div>
+
+  <!-- ▼ スタッフ個別反映モーダル  ---------------------------- -->
+  <div class="modal fade" id="staffModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+      <div class="modal-content">
+        <div class="modal-header py-2">
+          <h5 id="staffModalTitle" class="modal-title"></h5>
+          <button type="button" class="close" data-dismiss="modal">&times;</button>
+        </div>
+
+        <div class="modal-body py-3">
+          <div class="form-group mb-2">
+            <label class="mb-0">開始日</label>
+            <input type="date" id="modalStart" class="form-control">
+          </div>
+          <div class="form-group mb-2">
+            <label class="mb-0">終了日</label>
+            <input type="date" id="modalEnd" class="form-control">
+          </div>
+        </div>
+
+        <div class="modal-footer py-2">
+          <button id="modalApply" class="btn btn-sm btn-primary">✅ 反映する</button>
+          <button class="btn btn-sm btn-secondary" data-dismiss="modal">キャンセル</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ▼ レジ割当編集モーダル -->
+  <div class="modal fade" id="registerModal" tabindex="-1" role="dialog" aria-labelledby="registerModalLabel"
+    aria-hidden="true">
+    <div class="modal-dialog" role="document">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="registerModalLabel">レジ割当編集</h5>
+          <button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
+        </div>
+        <div class="modal-body">
+
+          <div class="mb-3">
+            <strong>対象シフト:</strong>
+            <span id="registerShiftInfo"></span>
+          </div>
+
+          <div id="registerList">
+            <!-- 割当リストがここに入る -->
+          </div>
+
+          <button class="btn btn-outline-primary btn-sm mt-2" id="addRegisterBtn">＋ 新規割当</button>
+        </div>
+        <div class="modal-footer">
+          <button id="saveRegisterBtn" class="btn btn-primary">保存</button>
+          <button class="btn btn-secondary" data-dismiss="modal">閉じる</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- タイムライン表示 -->
+  <div class="card shadow-sm mt-4">
+    <div class="card-body" style="padding: 0;">
+      <!-- 時間軸固定用のコンテナ -->
+      <div class="time-axis-container" id="timeAxisContainer"></div>
+
+      <!-- スクロール可能なタイムラインコンテナ -->
+      <div class="timeline-scroll-container" id="timeline-wrapper">
+        <div id="timeline"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 時間ごとの合計人数表示 -->
+  <div class="mt-3">
+    <table id="summaryTable" class="table table-sm table-bordered text-center bg-white">
+      <thead class="thead-light">
+        <tr id="summaryHeaderRow"></tr>
+      </thead>
+      <tbody>
+        <tr id="summaryDataRow"></tr>
+      </tbody>
+    </table>
+  </div>
+  </div>
+  <script>
+
     // スタッフ人数に応じて高さ調整
-    const staffCount = {{ staff|length }};
+    const staffCount = {{ staff| length }};
     const rowHeight = 40;
     const extraPadding = 60;
     const timelineHeight = staffCount * rowHeight + extraPadding;
@@ -247,77 +278,52 @@
     // グループデータ（スタッフ）
     const groups = new vis.DataSet([
       {% for staff in staff %}
-        { id: {{ staff.id }}, name: '{{ staff.name|escapejs }}' },
-      {% endfor %}
+    { id: {{ staff.id }}, name: '{{ staff.name|escapejs }}' },
+    {% endfor %}
     ]);
 
 
-    // アイテムデータ（シフト）
-    const items = new vis.DataSet([
-        {% for preference in preferences %}
-        {
-            id: {{ preference.id }},
-            content: '{{ preference.confirmed_starttime|time:"H:i" }}-{{ preference.confirmed_endtime|time:"H:i" }}',
-            start: '{{ preference.confirmed_starttime|date:"Y-m-d\\TH:i:s" }}',
-            end: '{{ preference.confirmed_endtime|date:"Y-m-d\\TH:i:s" }}',
-            group: {{ preference.staff.id }}
-        },
-        {% endfor %}
-    ]);
-
-    // レジ割当データ
-    const registerItems = [
-      {% for reg in register_assignments %}
-        {
-          id: 'reg-{{ reg.id }}',
-          group: '{{ reg.group|default_if_none:"" }}',            // 文字列で埋める
-          content: '{{ reg.content|escapejs }}',                  // 念のため escapejs
-          start: '{{ reg.start|escapejs }}',
-          end: '{{ reg.end|escapejs }}',
-          type: 'range',
-          editable: false,
-          className: '{{ reg.className|escapejs }}',
-          shift_id: '{{ reg.shift_id|default_if_none:"" }}',      // ← 文字列で。空でも構文は壊れない
-          register_number: '{{ reg.register_number|default_if_none:"" }}',
-        }{% if not forloop.last %},{% endif %}
-      {% endfor %}
-    ];
-    registerItems.forEach(it => {
-      it.group = Number(it.group || 0);
-      it.shift_id = Number(it.shift_id || 0);
-      it.register_number = Number(it.register_number || 0);
-      // id/type/editable/className はそのままでOK
-    });
-    registerItems.forEach(item => items.add(item));
 
 
-    // シフト希望データ（背景アイテム化）
-    const wishItems = [
-      {% for p in wish_preferences %}
-        {
-          id: 'wish-{{ p.id }}',
-          content: '',
-          start: '{{ p.date|date:"Y-m-d" }}T{{ p.starttime|time:"H:i:s" }}',
-          end:   '{{ p.date|date:"Y-m-d" }}T{{ p.endtime|time:"H:i:s" }}',
-          group: {{ p.staff.id }},
-          type: 'background',
-          className: 'wish-item',
-          title: '希望: {{ p.starttime|time:"H:i" }}-{{ p.endtime|time:"H:i" }}',
-          editable: false,      // ドラッグ & リサイズを完全禁止
-          selectable: false    // クリック選択もさせない
-        },
-      {% endfor %}
-    ];
-    wishItems.forEach(item => items.add(item));
+    // ★ 初期は空。1日分をAPIでロードして入れる
+    const items = new vis.DataSet([]);
+
+    // 今日 or URL ?date= の初期日付
+    let selectedDate = document.getElementById('date').value;
+
+    async function loadDayItems(ymd) {
+      const res = await fetch(`/api/shift-items/?date=${ymd}`);
+      const data = await res.json();
+
+      // items を再構築
+      items.clear();
+
+      // ISO文字列 → Date に変換してから追加（visがDateを期待するため）
+      const parsed = (data.items || [])
+        .filter(it => it.start && it.end) // start/end無いものは落とす
+        .map(it => ({
+          ...it,
+          start: new Date(it.start),
+          end: new Date(it.end),
+        }));
+      items.add(parsed);
+
+      // 画面のタイトル/サマリ更新も必要ならここで呼ぶ
+      scheduleRefreshSummary && scheduleRefreshSummary();
+    }
+
+    // 初期ロード
+    loadDayItems(selectedDate);
+
 
 
     // データ確認
-    console.log('Groups:', groups.get());
-    console.log('Items:', items.get());
+    // console.log は件数だけでOK（重さ防止）
+    console.log('Groups count:', groups.length);
     // console.log('wishItems:', wishItems.get ? wishItems.get() : wishItems);
 
 
-    
+
     //変更を保存する配列
     let changes = [];  // 配列で管理
 
@@ -339,41 +345,41 @@
       // ====== remove ======
       if (action === 'remove') {
 
-      // ★ 1) まず「まだDBにない新規シフト（add）」を消せるか確認
-      const addIndex = changes.findIndex(change =>
-        change.action === 'add' &&
-        change.item &&
-        String(change.item.tmp_id || '') === key
-      );
-
-      if (addIndex >= 0) {
-
-        // 新規シフトの追加をキャンセル
-        changes.splice(addIndex, 1);
-
-        // ★ 対象 tmp_id と一致する dirty register を確実に消す
-        if (typeof dirtyRegisterShiftIds !== 'undefined' && dirtyRegisterShiftIds.delete) {
-          dirtyRegisterShiftIds.delete(key);    // tmp_id と一致するもの
-        }
-
-        // ★ 万一レジ側が "shift_id" として group を参照していた場合にも備える
-        //   （あなたの実装では group=staff_id なので、ここは保険）
-        const altIdsToDelete = [];
-        for (const raw of dirtyRegisterShiftIds) {
-          if (String(raw).includes(key)) {
-            altIdsToDelete.push(raw);
-          }
-        }
-        altIdsToDelete.forEach(id => dirtyRegisterShiftIds.delete(id));
-
-        console.log(
-          'Cancel new ADD -> changes:', changes,
-          'dirtyRegisterShiftIds:', dirtyRegisterShiftIds
+        // ★ 1) まず「まだDBにない新規シフト（add）」を消せるか確認
+        const addIndex = changes.findIndex(change =>
+          change.action === 'add' &&
+          change.item &&
+          String(change.item.tmp_id || '') === key
         );
 
-        updateUnsavedIndicator();
-        return;
-      }
+        if (addIndex >= 0) {
+
+          // 新規シフトの追加をキャンセル
+          changes.splice(addIndex, 1);
+
+          // ★ 対象 tmp_id と一致する dirty register を確実に消す
+          if (typeof dirtyRegisterShiftIds !== 'undefined' && dirtyRegisterShiftIds.delete) {
+            dirtyRegisterShiftIds.delete(key);    // tmp_id と一致するもの
+          }
+
+          // ★ 万一レジ側が "shift_id" として group を参照していた場合にも備える
+          //   （あなたの実装では group=staff_id なので、ここは保険）
+          const altIdsToDelete = [];
+          for (const raw of dirtyRegisterShiftIds) {
+            if (String(raw).includes(key)) {
+              altIdsToDelete.push(raw);
+            }
+          }
+          altIdsToDelete.forEach(id => dirtyRegisterShiftIds.delete(id));
+
+          console.log(
+            'Cancel new ADD -> changes:', changes,
+            'dirtyRegisterShiftIds:', dirtyRegisterShiftIds
+          );
+
+          updateUnsavedIndicator();
+          return;
+        }
 
         // ★ 2) ここに来るのは「DBにある既存シフト」の削除
         // そのidに関する古い変更（updateなど）があれば一旦消しておく
@@ -390,60 +396,57 @@
         return;
       }
 
-        // ====== add ======
-        if (action === 'add') {
-            const payload = normalizeAddItem(item); // {tmp_id, group, start, end}
+      // ====== add ======
+      if (action === 'add') {
+        const payload = normalizeAddItem(item); // {tmp_id, group, start, end}
 
-            // すでに同一内容の add があるなら置換（多重登録防止）
-            const idx = changes.findIndex(ch => ch.action === 'add' && sameAdd(ch.item, payload));
-            if (idx < 0) {
-              changes.push({ action: 'add', item: payload });
-            } else {
-              changes[idx] = { action: 'add', item: payload };
-            }
-
-            console.log('ADD payload ->', payload);
-            updateUnsavedIndicator();
-            return;
-        }
-
-        // ====== 新規シフト(add)に対する move/update は「addの中身を書き換える」 ======
-        if (isNewShift && (action === 'update' || action === 'move')) {
-            const key = String(id || '');
-
-            const addIndex = changes.findIndex(ch =>
-              ch.action === 'add' &&
-              ch.item &&
-              String(ch.item.tmp_id || '') === key
-            );
-
-            if (addIndex >= 0) {
-              const payload = normalizeAddItem(item);  // 新しい時間で再生成
-              changes[addIndex] = { action: 'add', item: payload };
-              console.log('Merged into ADD (new shift moved):', changes[addIndex]);
-              updateUnsavedIndicator();
-              return;   // ★ update としてはサーバに送らない
-            }
-            // 見つからなければ、下の通常ロジックにフォールバック
-        }
-
-        // ====== ここから下は「既存シフト(DBにある白いシフト)」用 ======
-        const existingIndex = changes.findIndex(change => change.item.id === item.id);
-
-        if (existingIndex >= 0) {
-            // 既に存在している場合は上書き
-            changes[existingIndex] = { action: action, item: item };
+        // すでに同一内容の add があるなら置換（多重登録防止）
+        const idx = changes.findIndex(ch => ch.action === 'add' && sameAdd(ch.item, payload));
+        if (idx < 0) {
+          changes.push({ action: 'add', item: payload });
         } else {
-            // 新しいエントリを追加
-            changes.push({ action: action, item: item });
+          changes[idx] = { action: 'add', item: payload };
         }
 
-        console.log('Current changes:', changes);
+        console.log('ADD payload ->', payload);
         updateUnsavedIndicator();
+        return;
+      }
+
+      // ====== 新規シフト(add)に対する move/update は「addの中身を書き換える」 ======
+      if (isNewShift && (action === 'update' || action === 'move')) {
+        const key = String(id || '');
+
+        const addIndex = changes.findIndex(ch =>
+          ch.action === 'add' &&
+          ch.item &&
+          String(ch.item.tmp_id || '') === key
+        );
+
+        if (addIndex >= 0) {
+          const payload = normalizeAddItem(item);  // 新しい時間で再生成
+          changes[addIndex] = { action: 'add', item: payload };
+          console.log('Merged into ADD (new shift moved):', changes[addIndex]);
+          updateUnsavedIndicator();
+          return;   // ★ update としてはサーバに送らない
+        }
+        // 見つからなければ、下の通常ロジックにフォールバック
+      }
+
+      // ====== ここから下は「既存シフト(DBにある白いシフト)」用 ======
+      const existingIndex = changes.findIndex(change => change.item.id === item.id);
+
+      if (existingIndex >= 0) {
+        // 既に存在している場合は上書き
+        changes[existingIndex] = { action: action, item: item };
+      } else {
+        // 新しいエントリを追加
+        changes.push({ action: action, item: item });
+      }
+
+      console.log('Current changes:', changes);
+      updateUnsavedIndicator();
     }
-
-
-    const selectedDate = '{{ selected_date|date:"Y-m-d" }}';
 
     const dirtyRegisterShiftIds = new Set(); // 自動クランプ等でUIだけ変わったレジがあるシフト
     const unsavedIndicator = document.getElementById('unsavedIndicator');
@@ -508,249 +511,360 @@
       el.style.visibility = warnings.size ? 'visible' : 'hidden';
     }
 
-    function ms(d){ return +new Date(d); }
-    function isReg(item){
+    function ms(d) { return +new Date(d); }
+    function isReg(item) {
       const id = String(item.id || '');
       if (id.startsWith('reg-')) return true;           // DBにあるレジ
       if (id.startsWith('pending-reg-')) return true;   // UIドラフトのレジ
       // 念のため className でも判定（将来id命名が変わっても拾える）
       return !!(item.className && String(item.className).includes('register-item'));
     }
-    function isShift(item){ return !isReg(item) && !String(item.id).startsWith('wish-'); }
+    function isShift(item) { return !isReg(item) && !String(item.id).startsWith('wish-'); }
 
     // シフト範囲にクランプ（5分未満になったら null を返す）
-    function fmtHHMM(d){
+    function fmtHHMM(d) {
       const dt = (d instanceof Date) ? d : new Date(d);
-      return dt.toTimeString().slice(0,5);
+      return dt.toTimeString().slice(0, 5);
     }
 
     function clampToShift(shift, reg) {
       const S = ms(shift.start), E = ms(shift.end);
       const rs = Math.max(ms(reg.start), S);
-      const re = Math.min(ms(reg.end),   E);
+      const re = Math.min(ms(reg.end), E);
       if (re <= rs) return null; // 0分
       const durMin = (re - rs) / 60000;
       if (durMin < MIN_REG_MIN) return null; // 5分未満
       return { ...reg, start: new Date(rs), end: new Date(re) };
     }
-    
+
+    // ★ 営業時間（この画面では 08:00〜20:00 に固定）
+    const BUSINESS_START = new Date(selectedDate + 'T08:00:00');
+    const BUSINESS_END = new Date(selectedDate + 'T20:00:00');
+
+    // ★ シフトを営業時間内にクランプする
+    function clampToBusinessHours(item) {
+      let s = (item.start instanceof Date) ? new Date(item.start) : new Date(item.start);
+      let e = (item.end instanceof Date) ? new Date(item.end) : new Date(item.end);
+
+      if (s < BUSINESS_START) s = new Date(BUSINESS_START);
+      if (e > BUSINESS_END) e = new Date(BUSINESS_END);
+
+      // 万一 end <= start になったときは、最低1時間だけ確保
+      if (e <= s) {
+        const oneHourLater = new Date(s.getTime() + 60 * 60000);
+        e = oneHourLater > BUSINESS_END ? new Date(BUSINESS_END) : oneHourLater;
+      }
+
+      item.start = s;
+      item.end = e;
+      return item;
+    }
+
+    // ★ シフト移動用クランプ：長さを保ったまま 8:00〜20:00 の中に収める
+    function clampShiftMoveToBusinessHours(item) {
+      let s = (item.start instanceof Date) ? new Date(item.start) : new Date(item.start);
+      let e = (item.end instanceof Date) ? new Date(item.end) : new Date(item.end);
+
+      const dur = e - s; // シフト長（ms）
+
+      if (!Number.isFinite(dur) || dur <= 0) {
+        // 変な値ならとりあえず通常クランプに逃がす
+        return clampToBusinessHours(item);
+      }
+
+      // 左にはみ出し → 開店に合わせて右にスライド
+      if (s < BUSINESS_START) {
+        s = new Date(BUSINESS_START);
+        e = new Date(s.getTime() + dur);
+      }
+
+      // 右にはみ出し → 閉店に合わせて左にスライド
+      if (e > BUSINESS_END) {
+        e = new Date(BUSINESS_END);
+        s = new Date(e.getTime() - dur);
+      }
+
+      item.start = s;
+      item.end = e;
+      return item;
+    }
+
+
     // ユーティリティ（分まで）
     function hhmm(d) {
       const t = (d instanceof Date) ? d : new Date(d);
-      return String(t.getHours()).padStart(2,'0') + ':' + String(t.getMinutes()).padStart(2,'0');
+      return String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
     }
 
     // オプション設定
     var options = {
-        stack: false,
-        showCurrentTime: false,
-        groupOrder: 'content',
-        orientation: 'top', // 横軸を上に表示
-        horizontalScroll: true,
-        zoomable: false,  // 自前でズーム実装するのでfalseに
-        moveable: true,
-        start: new Date(selectedDate + 'T08:00:00'),
-        end: new Date(selectedDate + 'T20:00:00'),
-        min: new Date(selectedDate + 'T08:00:00'),
-        max: new Date(selectedDate + 'T20:00:00'),
-        zoomMin: 1000 * 60 * 15,
-        zoomMax: 1000 * 60 * 60 * 12,
-        editable: {
-            add: true,
-            updateTime: true,
-            updateGroup: true,
-            remove: true,
-            overrideItems: false
-        },
-        // onAdd
-        onAdd: function (item, callback) {
-          try {
-            const allowAdd = isCtrlDrag || ctrlHeld;
+      stack: false,
+      showCurrentTime: false,
+      groupOrder: 'content',
+      orientation: 'top', // 横軸を上に表示
+      horizontalScroll: true,
+      zoomable: false,  // 自前でズーム実装するのでfalseに
+      moveable: true,
+      start: new Date(selectedDate + 'T08:00:00'),
+      end: new Date(selectedDate + 'T20:00:00'),
+      min: new Date(selectedDate + 'T08:00:00'),
+      max: new Date(selectedDate + 'T20:00:00'),
+      zoomMin: 1000 * 60 * 15,
+      zoomMax: 1000 * 60 * 60 * 12,
+      editable: {
+        add: true,
+        updateTime: true,
+        updateGroup: true,
+        remove: true,
+        overrideItems: false
+      },
+      // onAdd
+      onAdd: function (item, callback) {
+        try {
+          const allowAdd = isCtrlDrag || ctrlHeld;
 
-            // console.debug('[onAdd] raw:', {
-            //   start: item.start,
-            //   end: item.end,
-            //   group: item.group,
-            //   isCtrlDrag,
-            //   ctrlHeld,
-            //   allowAdd
-            // });
+          // console.debug('[onAdd] raw:', {
+          //   start: item.start,
+          //   end: item.end,
+          //   group: item.group,
+          //   isCtrlDrag,
+          //   ctrlHeld,
+          //   allowAdd
+          // });
 
-            if (!allowAdd) {
-              // console.debug('[onAdd] canceled: not ctrl-drag/hold');
-              callback(null);
-              return;
-            }
-
-            let start = new Date(item.start);
-            let end = item.end ? new Date(item.end)
-                              : new Date(start.getTime() + 60 * 60000);
-            item.className = 'new-shift'; // ★ 新規シフト用クラス！
-
-            if (end < start) [start, end] = [end, start];
-            if ((end - start) < 60 * 1000) {
-              end = new Date(start.getTime() + 60 * 60000);
-            }
-
-            item.start = start;
-            item.end   = end;
-
-            onTaskBarChanged('add', item);
-
-            callback(item);            // ← もう消えないはず
-            relabelIfShift(item);
-            scheduleRefreshSummary();
-            updateUnsavedIndicator && updateUnsavedIndicator();
-
-          } catch (e) {
-            // console.error('[onAdd] error', e, item);
-            // alert('onAdd中にエラー: ' + e.message);
-            callback(null);
-          } finally {
-            isCtrlDrag = false;
-          }
-        },
-        onUpdate: function (item, callback) {
-          if (!isShift(item)) { callback(item); return; }
-          // 先に反映して位置（長さ）を確定
-          callback(item);
-
-          // シフト自身の表示＆保存記録
-          const moved = items.get(item.id);
-          relabelIfShift(moved);
-          onTaskBarChanged('update', moved);
-
-          // 伸縮に伴うレジのクランプ（onMoveと同じロジック）
-          const regs = items.get({ filter: it => isReg(it) && it.shift_id === item.id });
-          if (!regs.length) return;
-          const updates = [], removes = [];
-          regs.forEach(r => {
-            const before = { start: new Date(r.start), end: new Date(r.end) };
-            const clamped = clampToShift(moved, r);
-            if (clamped) {
-              const changed = ms(clamped.start)!==ms(r.start) || ms(clamped.end)!==ms(r.end);
-              if (changed) updates.push(clamped);
-            } else {
-              removes.push(r.id);
-            }
-          });
-          if (updates.length) items.update(updates);
-          if (removes.length) items.remove(removes);
-          clearRegWarningsForShift(item.id);   // 古い警告を掃除
-          markRegisterDirty(item.id);
-        },
-        onMove: function(item, callback) {
-          if (!isShift(item)) { callback(item); return; }
-
-          // 先に反映して位置を確定
-          callback(item);
-
-          // シフト自身の表示＆保存記録
-          const moved = items.get(item.id);
-          relabelIfShift(moved);
-          onTaskBarChanged('update', moved);
-
-          // 紐づくレジ（同じ shift_id）
-          const regs = items.get({ filter: it => isReg(it) && it.shift_id === item.id });
-          if (!regs.length) return;
-
-          const updates = [], removes = [];
-
-          regs.forEach(r => {
-            const inside = ms(r.start) >= ms(item.start) && ms(r.end) <= ms(item.end);
-            if (inside) return;
-
-            const before = { start: new Date(r.start), end: new Date(r.end) };
-            const clamped = clampToShift(item, r);
-
-            if (clamped) {
-              const changed = ms(clamped.start)!==ms(r.start) || ms(clamped.end)!==ms(r.end);
-              if (changed) {
-                updates.push(clamped);
-
-                // 結果的に完全包含なら警告スキップ
-                const nowInside = ms(clamped.start) >= ms(item.start) && ms(clamped.end) <= ms(item.end);
-                if (!nowInside) {
-                  addWarning(
-                    `reg-clamped-${r.id}`,
-                    `調整: レジ${r.register_number || '?'}（${r.id}） ${fmtHHMM(before.start)}–${fmtHHMM(before.end)} → ${fmtHHMM(clamped.start)}–${fmtHHMM(clamped.end)}（はみ出し）`
-                  );
-                }
-
-                addWarning(`reg-clamped-${r.id}`,
-                  `調整: レジ${r.register_number || '?'}（${r.id}） ${fmtHHMM(before.start)}–${fmtHHMM(before.end)} → ${fmtHHMM(clamped.start)}–${fmtHHMM(clamped.end)}（はみ出し）`);
-              }
-            } else {
-              removes.push(r.id);
-
-              addWarning(`reg-removed-${r.id}`,
-                `削除: レジ${r.register_number || '?'}（${r.id}） ${fmtHHMM(before.start)}–${fmtHHMM(before.end)}（0分/5分未満）`);
-            }
-          });
-
-          if (updates.length) items.update(updates);
-          if (removes.length) items.remove(removes);
-
-          // UIは最新＝警告も最新にする
-          clearRegWarningsForShift(item.id);
-          markRegisterDirty(item.id);
-        },
-        onRemove: function (item, callback) {
-          // 希望アイテムは削除不可
-          if (String(item.id).startsWith('wish-')) {
+          if (!allowAdd) {
+            // console.debug('[onAdd] canceled: not ctrl-drag/hold');
             callback(null);
             return;
           }
 
-          if (!confirm('このシフトを削除しますか？')) {
-            callback(null);
-            return;
+          let start = new Date(item.start);
+          let end = item.end ? new Date(item.end)
+            : new Date(start.getTime() + 60 * 60000);
+          item.className = 'new-shift'; // ★ 新規シフト用クラス！
+
+          if (end < start) [start, end] = [end, start];
+          if ((end - start) < 60 * 1000) {
+            end = new Date(start.getTime() + 60 * 60000);
           }
 
-          // 1) シフトをUIから削除（表示確定）
-          onTaskBarChanged('remove', item);
-          callback(item);
+          item.start = start;
+          item.end = end;
 
-          // 2) 紐づくレジ（reg-/pending-reg-/className=register-item）を即UIから削除
-          const regs = items.get({ filter: it => isReg(it) && it.shift_id === item.id });
-          if (regs.length) items.remove(regs.map(r => r.id));
+          // ★ 新規シフトも営業時間内に収める
+          clampToBusinessHours(item);
 
-          // 3) モーダル用ドラフトがあれば破棄（再オープンで残像を出さない）
-          if (typeof registersDraftByShift !== 'undefined' && registersDraftByShift instanceof Map) {
-            registersDraftByShift.delete(item.id);
-          }
+          onTaskBarChanged('add', item);
 
-          // 4) 一括保存で配下レジも削除させるため未保存フラグON
-          markRegisterDirty(item.id);
-
-          // 5) 警告掃除と集計更新
-          clearRegWarningsForShift(item.id);
+          callback(item);            // ← もう消えないはず
+          relabelIfShift(item);
           scheduleRefreshSummary();
-        },
-          groupTemplate: function (group) {
-            const wrap = document.createElement('div');
-            wrap.className = 'd-flex align-items-center';
+          updateUnsavedIndicator && updateUnsavedIndicator();
 
-            // クリック対象（スタッフ名）
-            const name = document.createElement('span');
-            name.textContent   = group.name;
-            name.className     = 'staff-label';     // ←クリック判定用
-            name.dataset.id    = group.id;
-            name.dataset.name  = group.name;
-            wrap.appendChild(name);
+        } catch (e) {
+          // console.error('[onAdd] error', e, item);
+          // alert('onAdd中にエラー: ' + e.message);
+          callback(null);
+        } finally {
+          isCtrlDrag = false;
+        }
+      },
+      onUpdate: function (item, callback) {
+        if (!isShift(item)) { callback(item); return; }
 
-            return wrap;
+        // ★ 変更前の状態を控えておく（一部だけでOK）
+        const beforeItem = items.get(item.id);
+        const beforeStart = beforeItem ? ms(beforeItem.start) : null;
+        const beforeEnd = beforeItem ? ms(beforeItem.end) : null;
+
+        // 先に反映して位置（長さ）を確定
+        callback(item);
+
+        // シフト自身の表示＆保存記録
+        let moved = items.get(item.id);
+        if (!moved) return;
+
+        // ★ 営業時間内にクランプして更新
+        moved = clampToBusinessHours(moved);
+        items.update(moved);
+
+        // ★ クランプ後の値を取得
+        const afterStart = ms(moved.start);
+        const afterEnd = ms(moved.end);
+
+        // ラベルは常に最新にしてOK
+        relabelIfShift(moved);
+
+        // ★ 変更前と全く同じ（8→8, 12→12）の場合はここで終了
+        if (beforeStart === afterStart && beforeEnd === afterEnd) {
+          // → 見た目もDB的にも何も変わっていない扱い
+          return;
+        }
+
+        // ここまで来たら「本当に時間が変わった」ときだけ
+        onTaskBarChanged('update', moved);
+
+        // 伸縮に伴うレジのクランプ（onMoveと同じロジック）
+        const regs = items.get({ filter: it => isReg(it) && it.shift_id === item.id });
+        if (!regs.length) return;
+        const updates = [], removes = [];
+        regs.forEach(r => {
+          const before = { start: new Date(r.start), end: new Date(r.end) };
+          const clamped = clampToShift(moved, r);
+          if (clamped) {
+            const changed = ms(clamped.start) !== ms(r.start) || ms(clamped.end) !== ms(r.end);
+            if (changed) updates.push(clamped);
+          } else {
+            removes.push(r.id);
           }
+        });
+        if (updates.length) items.update(updates);
+        if (removes.length) items.remove(removes);
+        clearRegWarningsForShift(item.id);   // 古い警告を掃除
+        markRegisterDirty(item.id);
+      },
+      onMoving: function (item, callback) {
+        // シフト以外（レジとか）は素通し
+        if (!isShift(item)) {
+          callback(item);
+          return;
+        }
+
+        // ドラッグ中の見た目も 8:00〜20:00 内に収める
+        clampShiftMoveToBusinessHours(item);
+        callback(item);
+      },
+
+      onMove: function (item, callback) {
+        if (!isShift(item)) { callback(item); return; }
+
+        // ★ 変更前の状態を控えておく
+        const beforeItem = items.get(item.id);
+        const beforeStart = beforeItem ? ms(beforeItem.start) : null;
+        const beforeEnd = beforeItem ? ms(beforeItem.end) : null;
+
+        // 先に反映して位置を確定
+        callback(item);
+
+        // シフト自身の表示＆保存記録
+        let moved = items.get(item.id);
+        if (!moved) return;
+
+        // ★ 営業時間内にクランプして更新
+        moved = clampShiftMoveToBusinessHours(moved);
+        items.update(moved);
+
+        const afterStart = ms(moved.start);
+        const afterEnd = ms(moved.end);
+
+        relabelIfShift(moved);
+
+        // ★ 見た目上もロジック上も変わっていないなら、ここで終わり
+        if (beforeStart === afterStart && beforeEnd === afterEnd) {
+          return;
+        }
+
+        // 本当に位置が変わったときだけ、未保存扱いにする
+        onTaskBarChanged('update', moved);
+
+        // 紐づくレジ（同じ shift_id）
+        const regs = items.get({ filter: it => isReg(it) && it.shift_id === item.id });
+        if (!regs.length) return;
+
+        const updates = [], removes = [];
+
+        regs.forEach(r => {
+          const inside = ms(r.start) >= ms(moved.start) && ms(r.end) <= ms(moved.end);
+          if (inside) return;
+
+          const before = { start: new Date(r.start), end: new Date(r.end) };
+          const clamped = clampToShift(moved, r);
+
+          if (clamped) {
+            const changed = ms(clamped.start) !== ms(r.start) || ms(clamped.end) !== ms(r.end);
+            if (changed) {
+              updates.push(clamped);
+
+              const nowInside = ms(clamped.start) >= ms(moved.start) && ms(clamped.end) <= ms(moved.end);
+              if (!nowInside) {
+                addWarning(
+                  `reg-clamped-${r.id}`,
+                  `調整: レジ${r.register_number || '?'}（${r.id}） ${fmtHHMM(before.start)}–${fmtHHMM(before.end)} → ${fmtHHMM(clamped.start)}–${fmtHHMM(clamped.end)}（はみ出し）`
+                );
+              }
+            }
+          } else {
+            removes.push(r.id);
+            addWarning(
+              `reg-removed-${r.id}`,
+              `削除: レジ${r.register_number || '?'}（${r.id}） ${fmtHHMM(before.start)}–${fmtHHMM(before.end)}（0分/5分未満）`
+            );
+          }
+        });
+
+        if (updates.length) items.update(updates);
+        if (removes.length) items.remove(removes);
+
+        clearRegWarningsForShift(item.id);
+        markRegisterDirty(item.id);
+      },
+
+      onRemove: function (item, callback) {
+        // 希望アイテムは削除不可
+        if (String(item.id).startsWith('wish-')) {
+          callback(null);
+          return;
+        }
+
+        if (!confirm('このシフトを削除しますか？')) {
+          callback(null);
+          return;
+        }
+
+        // 1) シフトをUIから削除（表示確定）
+        onTaskBarChanged('remove', item);
+        callback(item);
+
+        // 2) 紐づくレジ（reg-/pending-reg-/className=register-item）を即UIから削除
+        const regs = items.get({ filter: it => isReg(it) && it.shift_id === item.id });
+        if (regs.length) items.remove(regs.map(r => r.id));
+
+        // 3) モーダル用ドラフトがあれば破棄（再オープンで残像を出さない）
+        if (typeof registersDraftByShift !== 'undefined' && registersDraftByShift instanceof Map) {
+          registersDraftByShift.delete(item.id);
+        }
+
+        // 4) 一括保存で配下レジも削除させるため未保存フラグON
+        markRegisterDirty(item.id);
+
+        // 5) 警告掃除と集計更新
+        clearRegWarningsForShift(item.id);
+        scheduleRefreshSummary();
+      },
+      groupTemplate: function (group) {
+        const wrap = document.createElement('div');
+        wrap.className = 'd-flex align-items-center';
+
+        // クリック対象（スタッフ名）
+        const name = document.createElement('span');
+        name.textContent = group.name;
+        name.className = 'staff-label';     // ←クリック判定用
+        name.dataset.id = group.id;
+        name.dataset.name = group.name;
+        wrap.appendChild(name);
+
+        return wrap;
+      }
     };
 
-    
+
 
 
     // 表示ラベル更新ユーティリティ
     function fmtHHMM(d) {
       const dt = (d instanceof Date) ? d : new Date(d);
-      const hh = String(dt.getHours()).padStart(2,'0');
-      const mm = String(dt.getMinutes()).padStart(2,'0');
+      const hh = String(dt.getHours()).padStart(2, '0');
+      const mm = String(dt.getMinutes()).padStart(2, '0');
       return `${hh}:${mm}`;
     }
     function relabelIfShift(item) {
@@ -767,23 +881,23 @@
     }
 
 
-      // 集計を現在の表示範囲＆最新itemsで再計算して描画
-      function refreshSummary() {
-        const range = timeline.getWindow();
-        const slots = generateHourlySlots(range.start, range.end);
-        const counts = calculateStaffCounts(slots, items.get());
-        renderSummary(counts);
-      }
+    // 集計を現在の表示範囲＆最新itemsで再計算して描画
+    function refreshSummary() {
+      const range = timeline.getWindow();
+      const slots = generateHourlySlots(range.start, range.end);
+      const counts = calculateStaffCounts(slots, items.get());
+      renderSummary(counts);
+    }
 
-      // 軽量なデバウンス（多重更新を間引く）
-      let _sumTimer = null;
-      function scheduleRefreshSummary() {
-        if (_sumTimer) clearTimeout(_sumTimer);
-        _sumTimer = setTimeout(() => {
-          _sumTimer = null;
-          refreshSummary();
-        }, 40);
-      }
+    // 軽量なデバウンス（多重更新を間引く）
+    let _sumTimer = null;
+    function scheduleRefreshSummary() {
+      if (_sumTimer) clearTimeout(_sumTimer);
+      _sumTimer = setTimeout(() => {
+        _sumTimer = null;
+        refreshSummary();
+      }, 40);
+    }
     // メインのタイムライン
     var container = document.getElementById('timeline');
     var timeline = new vis.Timeline(container, items, groups, options);
@@ -819,7 +933,7 @@
 
     (function blockVisHorizontalScroll() {
       const scrollBox = document.getElementById('timeline-wrapper');
-      
+
       // ちょっと待って内部DOMが描画されてから刺す
       setTimeout(() => {
         const target =
@@ -854,22 +968,22 @@
 
 
     // DataSet の変更を監視（add/update/remove）
-    items.on('add',    () => scheduleRefreshSummary());
+    items.on('add', () => scheduleRefreshSummary());
     items.on('update', () => scheduleRefreshSummary());
     items.on('remove', () => scheduleRefreshSummary());
 
     let currentShiftId = null;
     let registerAssignments = [];  // 一時保存
 
-    function minutesBetween(dateA, dateB){
-      const a = (dateA instanceof Date)? dateA : new Date(dateA);
-      const b = (dateB instanceof Date)? dateB : new Date(dateB);
+    function minutesBetween(dateA, dateB) {
+      const a = (dateA instanceof Date) ? dateA : new Date(dateA);
+      const b = (dateB instanceof Date) ? dateB : new Date(dateB);
       return Math.abs((b - a) / 60000);
     }
 
-    function hhmmFromDate(d){
+    function hhmmFromDate(d) {
       const t = (d instanceof Date) ? d : new Date(d);
-      return String(t.getHours()).padStart(2,'0') + ':' + String(t.getMinutes()).padStart(2,'0');
+      return String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
     }
     // 共通：指定アイテムでレジ編集モーダルを開く（確定シフトのみ）
     function openRegisterForItem(itemId) {
@@ -880,8 +994,8 @@
       if (!shiftItem) return;      // ← ここでガード
       currentShiftId = itemId;
 
-      const startTime = new Date(shiftItem.start).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'});
-      const endTime   = new Date(shiftItem.end).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'});
+      const startTime = new Date(shiftItem.start).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+      const endTime = new Date(shiftItem.end).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
       const staffName = (groups.get && groups.get(shiftItem.group)?.name) || '';
       $('#registerShiftInfo').text(`${staffName ? staffName + '｜' : ''}${startTime} 〜 ${endTime}`);
 
@@ -892,11 +1006,11 @@
         registerAssignments = uiRegs
           .filter(r => minutesBetween(r.start, r.end) >= MIN_REG_MIN)
           .map(r => ({
-          id: String(r.id).replace(/^reg-/, ''),             // 数字ID相当に整形（新規は空でもOK）
-          register_number: r.register_number,
-          register_start_time: hhmmFromDate(r.start),
-          register_end_time:   hhmmFromDate(r.end),
-        }));
+            id: String(r.id).replace(/^reg-/, ''),             // 数字ID相当に整形（新規は空でもOK）
+            register_number: r.register_number,
+            register_start_time: hhmmFromDate(r.start),
+            register_end_time: hhmmFromDate(r.end),
+          }));
         renderRegisterList();
         $('#registerModal').modal('show');
         return;
@@ -910,7 +1024,7 @@
             id: String(a.id),
             register_number: a.register_number,
             register_start_time: a.register_start_time,
-            register_end_time:   a.register_end_time
+            register_end_time: a.register_end_time
           }));
 
           // （もし残っていれば）pending のマージはそのまま
@@ -928,7 +1042,7 @@
                 id: rid,
                 register_number: ch.item.register_number ?? null,
                 register_start_time: ch.item.register_start_time,
-                register_end_time:   ch.item.register_end_time,
+                register_end_time: ch.item.register_end_time,
               };
               const i = merged.findIndex(x => x.id === rid);
               if (i >= 0) merged[i] = updated;
@@ -998,7 +1112,7 @@
       renderRegisterList();
     });
 
-    function getShiftBoundary(shiftId){
+    function getShiftBoundary(shiftId) {
       // 1) 画面上の現在値
       const it = items.get(shiftId);
       let start = new Date(it.start), end = new Date(it.end);
@@ -1007,9 +1121,9 @@
       const pend = (changes || []).find(c =>
         (c.action === 'update' || c.action === 'move') && c.item.id === shiftId
       );
-      if (pend){
+      if (pend) {
         start = new Date(pend.item.start);
-        end   = new Date(pend.item.end);
+        end = new Date(pend.item.end);
       }
       return { start, end };
     }
@@ -1024,12 +1138,12 @@
       const mm = String(d.getMinutes()).padStart(2, '0');
       return `${hh}:${mm}`;
     }
-    
+
     // レジの時間をシフト境界でクランプ
     function clampRegisterToShift(a, shiftStart, shiftEnd, selectedDate, warnings) {
       const rs = new Date(`${selectedDate}T${a.register_start_time}:00`);
 
-    
+
       const re = new Date(`${selectedDate}T${a.register_end_time}:00`);
 
       if (isNaN(rs) || isNaN(re)) {
@@ -1059,27 +1173,29 @@
     }
 
     // "YYYY-MM-DD" を返す
-    function ymdStr(x){ const d = (x instanceof Date)? x : new Date(x);
-      const m = String(d.getMonth()+1).padStart(2,'0');
-      const da = String(d.getDate()).padStart(2,'0');
+    function ymdStr(x) {
+      const d = (x instanceof Date) ? x : new Date(x);
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const da = String(d.getDate()).padStart(2, '0');
       return `${d.getFullYear()}-${m}-${da}`;
     }
 
     // item.start の日付が [startYmd, endYmd] に入っているか
-    function isItemInDateRange(item, startYmd, endYmd){
+    function isItemInDateRange(item, startYmd, endYmd) {
       const y = ymdStr(item.start);
       return y >= startYmd && y <= endYmd;
     }
 
     // 指定範囲 × 指定スタッフ(nullで全員) を
     // 「確定シフト＋配下レジ 全消し → wishから確定を作り直し」
-    function resetToWishForRange(startYmd, endYmd, staffIdOrNull){
+    function resetToWishForRange(startYmd, endYmd, staffIdOrNull) {
 
       // 1) 対象の「確定シフト」を全部集める（希望の有無は見ない）
-      const targetShifts = items.get({ filter: it =>
-        isShift(it) &&                              // レジでもwishでもない「確定シフト」
-        isItemInDateRange(it, startYmd, endYmd) &&  // 日付範囲内
-        (staffIdOrNull === null || Number(it.group) === Number(staffIdOrNull)) // 対象スタッフ
+      const targetShifts = items.get({
+        filter: it =>
+          isShift(it) &&                              // レジでもwishでもない「確定シフト」
+          isItemInDateRange(it, startYmd, endYmd) &&  // 日付範囲内
+          (staffIdOrNull === null || Number(it.group) === Number(staffIdOrNull)) // 対象スタッフ
       });
 
       // 1-2) それらを削除キューに積みつつ、画面からも消す
@@ -1088,12 +1204,13 @@
         changes.push({ action: 'remove', item: { id: shiftItem.id } });
 
         // そのシフトに紐づくレジを全部削除（UI）＋ dirty フラグ
-        const regs = items.get({ filter: r =>
-          isReg(r) &&
-          r.shift_id === shiftItem.id &&
-          isItemInDateRange(r, startYmd, endYmd)
+        const regs = items.get({
+          filter: r =>
+            isReg(r) &&
+            r.shift_id === shiftItem.id &&
+            isItemInDateRange(r, startYmd, endYmd)
         });
-        if (regs.length){
+        if (regs.length) {
           markRegisterDirty(shiftItem.id);
           items.remove(regs.map(r => r.id));
         }
@@ -1103,26 +1220,27 @@
       });
 
       // 2) wish をベースに確定シフトを新規追加（changesにadd）
-      const wishShifts = items.get({ filter: it =>
-        String(it.id).startsWith('wish-') &&
-        isItemInDateRange(it, startYmd, endYmd) &&
-        (staffIdOrNull === null || Number(it.group) === Number(staffIdOrNull))
+      const wishShifts = items.get({
+        filter: it =>
+          String(it.id).startsWith('wish-') &&
+          isItemInDateRange(it, startYmd, endYmd) &&
+          (staffIdOrNull === null || Number(it.group) === Number(staffIdOrNull))
       });
 
       wishShifts.forEach(wish => {
         // 画面上の表示用（Dateにして描画）
         const newId = items.add({
           content: `${fmtHHMM(wish.start)}-${fmtHHMM(wish.end)}`,
-          start:   new Date(wish.start),
-          end:     new Date(wish.end),
-          group:   wish.group
+          start: new Date(wish.start),
+          end: new Date(wish.end),
+          group: wish.group
         });
 
         // サーバ保存用（文字列のまま → saveAllChanges で送信）
         onTaskBarChanged('add', {
           group: wish.group,
           start: wish.start,  // "YYYY-MM-DDTHH:MM:SS"
-          end:   wish.end
+          end: wish.end
         });
       });
 
@@ -1156,10 +1274,10 @@
     }
 
     // シフトID単位でレジ帯を入れ替える
-    function refreshRegisterItemsForShift(shiftId){
-      return fetch(`/get-register-assignments/?shift_id=${shiftId}`, { credentials:'same-origin' })
+    function refreshRegisterItemsForShift(shiftId) {
+      return fetch(`/get-register-assignments/?shift_id=${shiftId}`, { credentials: 'same-origin' })
         .then(r => r.json())
-        .then(({assignments}) => {
+        .then(({ assignments }) => {
           // ① 既存のこのシフトのレジ帯を全削除
           const olds = items.get({ filter: it => isReg(it) && it.shift_id === shiftId });
           if (olds.length) items.remove(olds.map(it => it.id));
@@ -1169,61 +1287,61 @@
           if (!shiftItem) return;
 
           (assignments || []).forEach(a => {
-          const start = timeToDate(selectedDate, a.register_start_time);
-          const end   = timeToDate(selectedDate, a.register_end_time);
-          if (!start || !end || isNaN(+start) || isNaN(+end)) return; // 不正はスキップ
-          items.add({
-            id: 'reg-' + a.id,
-            group: shiftItem.group,
-            content: `レジ${a.register_number}`,
-            start, end,
-            type: 'range',
-            editable: false,
-            className: `register-item reg${a.register_number}`,
-            shift_id: shiftId,
-            register_number: a.register_number
+            const start = timeToDate(selectedDate, a.register_start_time);
+            const end = timeToDate(selectedDate, a.register_end_time);
+            if (!start || !end || isNaN(+start) || isNaN(+end)) return; // 不正はスキップ
+            items.add({
+              id: 'reg-' + a.id,
+              group: shiftItem.group,
+              content: `レジ${a.register_number}`,
+              start, end,
+              type: 'range',
+              editable: false,
+              className: `register-item reg${a.register_number}`,
+              shift_id: shiftId,
+              register_number: a.register_number
+            });
           });
-        });
 
           // ③ UI更新
           timeline.redraw();
           scheduleRefreshSummary();
 
           // ④ ついでに、このシフトに対する未保存レジ変更をクリア（混乱防止）
-          if (Array.isArray(changes) && changes.length){
+          if (Array.isArray(changes) && changes.length) {
             changes = changes.filter(c => {
               if (c.action !== 'update_reg' && c.action !== 'remove_reg') return true;
               return String(c?.item?.shift_id || '') !== String(shiftId);
             });
           }
         });
-        clearRegWarningsForShift(shiftId);
+      clearRegWarningsForShift(shiftId);
     }
 
     // UI上のレジ帯から payload を作成（必要ならクランプ）
-    function buildAssignmentsFromUI(shiftId){
+    function buildAssignmentsFromUI(shiftId) {
       const shift = items.get(shiftId);
       if (!shift) return [];
 
       const shiftStart = new Date(shift.start);
-      const shiftEnd   = new Date(shift.end);
+      const shiftEnd = new Date(shift.end);
 
       // このシフトのレジ帯を取得
       const regs = items.get({ filter: it => isReg(it) && it.shift_id === shiftId });
 
       const toHHMM = (d) => {
         const dt = (d instanceof Date) ? d : new Date(d);
-        return String(dt.getHours()).padStart(2,'0') + ':' + String(dt.getMinutes()).padStart(2,'0');
+        return String(dt.getHours()).padStart(2, '0') + ':' + String(dt.getMinutes()).padStart(2, '0');
       };
 
       const list = [];
-      for (const r of regs){
+      for (const r of regs) {
         // 画面の start/end を再クランプ（安全側）
         const rs = new Date(r.start);
         const re = new Date(r.end);
 
         const crs = rs < shiftStart ? shiftStart : rs;
-        const cre = re > shiftEnd   ? shiftEnd   : re;
+        const cre = re > shiftEnd ? shiftEnd : re;
 
         // 5分未満はスキップ（UI側と同じ基準）
         const durMin = (cre - crs) / 60000;
@@ -1233,48 +1351,48 @@
           shift_id: shiftId,
           register_number: r.register_number,
           register_start_time: toHHMM(crs),
-          register_end_time:   toHHMM(cre),
+          register_end_time: toHHMM(cre),
         });
       }
       return list;
     }
 
     // 追加：ローカル日時 "YYYY-MM-DDTHH:MM:SS" にそろえる
-    function pad2(n){ return String(n).padStart(2,'0'); }
+    function pad2(n) { return String(n).padStart(2, '0'); }
 
     // "YYYY-MM-DDTHH:MM:SS±HH:MM" を返す（ローカル時刻ベース）
-    function toLocalISOWithOffset(x){
+    function toLocalISOWithOffset(x) {
       const d = (x instanceof Date) ? x : new Date(x); // "2025-11-01T09:00:00" でもOK（ローカル解釈）
       const y = d.getFullYear();
-      const m = pad2(d.getMonth()+1);
-      const da= pad2(d.getDate());
-      const hh= pad2(d.getHours());
-      const mm= pad2(d.getMinutes());
-      const ss= pad2(d.getSeconds());
+      const m = pad2(d.getMonth() + 1);
+      const da = pad2(d.getDate());
+      const hh = pad2(d.getHours());
+      const mm = pad2(d.getMinutes());
+      const ss = pad2(d.getSeconds());
       const offMin = -d.getTimezoneOffset(); // JSTなら+540
       const sign = offMin >= 0 ? '+' : '-';
-      const oh = pad2(Math.floor(Math.abs(offMin)/60));
-      const om = pad2(Math.abs(offMin)%60);
+      const oh = pad2(Math.floor(Math.abs(offMin) / 60));
+      const om = pad2(Math.abs(offMin) % 60);
       return `${y}-${m}-${da}T${hh}:${mm}:${ss}${sign}${oh}:${om}`; // 例: ...T09:00:00+09:00
     }
 
     // 受け取った item を {tmp_id, group, start, end} に正規化（常にオフセット付き）
-    function normalizeAddItem(raw){
+    function normalizeAddItem(raw) {
       const i = Array.isArray(raw) ? raw[0] : raw;
       return {
         // ★ vis がくれた一時IDをクライアント専用で保持（サーバには送らない）
         tmp_id: String(i.id || ''),
         group: Number(i.group),
         start: toLocalISOWithOffset(i.start),
-        end:   toLocalISOWithOffset(i.end),
+        end: toLocalISOWithOffset(i.end),
       };
     }
 
 
-    function sameAdd(a,b){
-      return Number(a.group)===Number(b.group)
-          && String(a.start)===String(b.start)
-          && String(a.end)  ===String(b.end);
+    function sameAdd(a, b) {
+      return Number(a.group) === Number(b.group)
+        && String(a.start) === String(b.start)
+        && String(a.end) === String(b.end);
     }
 
 
@@ -1324,13 +1442,13 @@
 
       for (const a of assignments) {
         const aStart = toDate(selectedDate, a.register_start_time);
-        const aEnd   = toDate(selectedDate, a.register_end_time);
+        const aEnd = toDate(selectedDate, a.register_end_time);
         if (!aStart || !aEnd || isNaN(+aStart) || isNaN(+aEnd)) continue;
 
         for (const o of others) {
           if (Number(o.register_number) !== Number(a.register_number)) continue;
           const oStart = new Date(o.start);
-          const oEnd   = new Date(o.end);
+          const oEnd = new Date(o.end);
           if (!oStart || !oEnd || isNaN(+oStart) || isNaN(+oEnd)) continue;
 
           if (timeOverlap(aStart, aEnd, oStart, oEnd)) {
@@ -1341,7 +1459,7 @@
                 staff: staffName,
                 reg: o.register_number,
                 start: hhmm(oStart),
-                end:   hhmm(oEnd),
+                end: hhmm(oEnd),
               }
             });
           }
@@ -1352,8 +1470,8 @@
 
     // 保存ボタン
 
-        $('#saveRegisterBtn').click(() => {
-      $('#registerList .input-group').each(function(i) {
+    $('#saveRegisterBtn').click(() => {
+      $('#registerList .input-group').each(function (i) {
         registerAssignments[i].register_number = parseInt($(this).find('.regNum').val(), 10);
         registerAssignments[i].register_start_time = $(this).find('.regStartTime').val();
         registerAssignments[i].register_end_time = $(this).find('.regEndTime').val();
@@ -1369,7 +1487,7 @@
       }
 
       const invalids = adjusted.filter(a => a.__invalid);
-      const valids   = adjusted.filter(a => !a.__invalid);
+      const valids = adjusted.filter(a => !a.__invalid);
 
       const overlapConflicts = detectRegisterOverlaps(valids, selectedDate);
       if (overlapConflicts.length) {
@@ -1380,7 +1498,7 @@
         return;
       }
 
-       // ★ 追加：他スタッフの同番号レジとの重複チェック（クロススタッフ）
+      // ★ 追加：他スタッフの同番号レジとの重複チェック（クロススタッフ）
       const crossConflicts = detectCrossStaffRegisterConflicts(valids, selectedDate, currentShiftId);
       if (crossConflicts.length) {
         const shiftInfo = ($('#registerShiftInfo').text() || '').trim();
@@ -1407,7 +1525,7 @@
       }
 
       registerAssignments = valids
-        .map(({__invalid, ...rest}) => rest)
+        .map(({ __invalid, ...rest }) => rest)
         .filter(a => {
           const rs = toDate(selectedDate, a.register_start_time);
           const re = toDate(selectedDate, a.register_end_time);
@@ -1427,19 +1545,19 @@
 
     // 固定時間軸セットアップ関数 - スタッフ名列幅に合わせる改良版
     function setupFixedTimeAxis() {
-        // 固定時間軸用のコンテナを取得
-        const timeAxisContainer = document.getElementById('timeAxisContainer');
-        
-        // タイムラインの描画完了を待つ
-        setTimeout(() => {
-            // スタッフ名列の幅を取得
-            const labelSet = document.querySelector('.vis-labelset');
-            labelSetWidth = labelSet ? labelSet.offsetWidth : 150; // デフォルト値は150px
-            
-            console.log('Detected labelset width:', labelSetWidth); // デバッグ用
-            
-            // カスタム時間軸をHTML要素として作成
-            timeAxisContainer.innerHTML = `
+      // 固定時間軸用のコンテナを取得
+      const timeAxisContainer = document.getElementById('timeAxisContainer');
+
+      // タイムラインの描画完了を待つ
+      setTimeout(() => {
+        // スタッフ名列の幅を取得
+        const labelSet = document.querySelector('.vis-labelset');
+        labelSetWidth = labelSet ? labelSet.offsetWidth : 150; // デフォルト値は150px
+
+        console.log('Detected labelset width:', labelSetWidth); // デバッグ用
+
+        // カスタム時間軸をHTML要素として作成
+        timeAxisContainer.innerHTML = `
                 <div class="custom-time-axis">
                     <div class="time-container">
                         <div class="time-cell time-label" style="min-width: ${labelSetWidth}px; max-width: ${labelSetWidth}px;">時間</div>
@@ -1458,18 +1576,18 @@
                     </div>
                 </div>
             `;
-            
-            // スタイルを適用
-            const styleId = 'custom-time-axis-style';
-            let style = document.getElementById(styleId);
-            
-            if (!style) {
-                style = document.createElement('style');
-                style.id = styleId;
-                document.head.appendChild(style);
-            }
-            
-            style.textContent = `
+
+        // スタイルを適用
+        const styleId = 'custom-time-axis-style';
+        let style = document.getElementById(styleId);
+
+        if (!style) {
+          style = document.createElement('style');
+          style.id = styleId;
+          document.head.appendChild(style);
+        }
+
+        style.textContent = `
                 .custom-time-axis {
                     width: 100%;
                     overflow: hidden;
@@ -1505,307 +1623,330 @@
                     border-right: none;
                 }
             `;
-            
-            // スクロール連動を設定
-            setupScrollSynchronization();
-            
-        }, 500); // タイムラインの描画が完了するまで少し待つ
+
+        // スクロール連動を設定
+        setupScrollSynchronization();
+
+      }, 500); // タイムラインの描画が完了するまで少し待つ
     };
 
     // スクロール同期設定関数
     function setupScrollSynchronization() {
-        const scrollContainer = document.querySelector('.timeline-scroll-container');
-        const customTimeAxis = document.querySelector('.custom-time-axis');
-        
-        if (scrollContainer && customTimeAxis) {
-            // 横スクロール同期 - スクロールコンテナのスクロールに合わせて時間軸も移動
-            scrollContainer.addEventListener('scroll', function() {
-                // スクロール位置の同期
-                customTimeAxis.style.transform = `translateX(${scrollContainer.scrollLeft}px)`;
-            });
-        }
-    };
+      const scrollContainer = document.querySelector('.timeline-scroll-container');
+      const customTimeAxis = document.querySelector('.custom-time-axis');
 
-  function getGroupColumnWidth() {
-    const groupElement = container.querySelector('.vis-group');
-    return groupElement ? groupElement.offsetWidth : 100; // fallback 100px
-  };
-
-  function generateHourlySlots(start, end) {
-    const slots = [];
-    const current = new Date(start);
-    current.setMinutes(0, 0, 0); // 時間ジャストにする
-
-    while (current < end) {
-      const slotStart = new Date(current);
-      const slotEnd = new Date(current);
-      slotEnd.setHours(slotEnd.getHours() + 1);
-      slots.push({ start: slotStart, end: slotEnd });
-      current.setHours(current.getHours() + 1);
-    }
-
-    return slots;
-  };
-
-  // 「確定シフト」だけを true にする判定
-  function isConfirmedShiftItem(item) {
-    const id = String(item.id || '');
-    if (id.startsWith('reg-')) return false;                 // レジ帯（register-item）
-    if (id.startsWith('wish-')) return false;                // 希望背景
-    if (item.type === 'background') return false;            // 念のため
-    if (item.className && String(item.className).includes('register-item')) return false;
-    return true; // それ以外＝確定シフト
-  }
-
-  function calculateStaffCounts(slots, baseItems) {
-    const confirmed = (baseItems || items.get()).filter(isConfirmedShiftItem);
-    return slots.map(slot => {
-      const count = confirmed.filter(item => {
-        const itemStart = new Date(item.start);
-        const itemEnd = new Date(item.end);
-        return itemEnd > slot.start && itemStart < slot.end;
-      }).length;
-      return { label: `${slot.start.getHours()}:00〜${slot.end.getHours()}:00`, count };
-    });
-  };
-
-
-  function renderSummary(counts) {
-    const headerRow = document.getElementById('summaryHeaderRow');
-    const dataRow = document.getElementById('summaryDataRow');
-
-    headerRow.innerHTML = '';
-    dataRow.innerHTML = '';
-
-    // 合計スタッフ人数（確定シフトのみのユニーク staff ID）
-    const confirmedOnly = items.get().filter(isConfirmedShiftItem);
-    const allStaffIds = new Set(confirmedOnly.map(i => i.group));
-    const totalStaffCount = allStaffIds.size;
-
-    // ✅ ヘッダー左端セル → 「合計人数」
-    const headerTh = document.createElement('th');
-    headerTh.textContent = '合計人数';
-    headerTh.style.minWidth = labelSetWidth + 'px';
-    headerTh.style.width = labelSetWidth + 'px';
-    headerRow.appendChild(headerTh);
-
-    // ✅ データ行左端セル → 数値（合計人数）
-    const countTd = document.createElement('td');
-    countTd.textContent = totalStaffCount;
-    countTd.style.minWidth = labelSetWidth + 'px';
-    countTd.style.width = labelSetWidth + 'px';
-    dataRow.appendChild(countTd);
-
-    // ⏱ 時間帯のヘッダーと人数セルを追加
-    counts.forEach(c => {
-      const th = document.createElement('th');
-      th.textContent = c.label;
-      headerRow.appendChild(th);
-
-      const td = document.createElement('td');
-      td.textContent = `${c.count}人`;
-      dataRow.appendChild(td);
-    });
-  };
-
-
-  // 初回表示用
-  items.get().forEach(it => relabelIfShift(it));
-  refreshSummary();
-
-document.getElementById('saveChangesBtn').addEventListener('click', function(e) {
-  if (warnings && warnings.size > 0) {
-    const lines = Array.from(warnings.values());
-    const msg = [
-      `注意：自動調整/削除などが ${warnings.size} 件あります。`,
-      '',
-      '— 詳細 —',
-      ...lines.map(s => `・${s}`)
-    ].join('\n');
-
-    const ok = confirm(msg);
-    if (!ok) {
-      e.preventDefault();
-      e.stopPropagation();
-      return false;
-    }
-  }
-  saveAllChanges();
-});
-
-  // シフトIDに紐づくレジ警告を一掃
-  function clearRegWarningsForShift(shiftId){
-    if (!warnings || warnings.size === 0) return;
-    // 今のUIに存在する reg IDs を把握
-    const regs = items.get({ filter: it => isReg(it) && it.shift_id === shiftId });
-    const validKeys = new Set();
-    regs.forEach(r => {
-      validKeys.add(`reg-clamped-${r.id}`);
-      validKeys.add(`reg-removed-${r.id}`);
-    });
-
-    // 方式1：該当シフトのレジ警告は丸ごと消す（シンプル）
-    for (const k of Array.from(warnings.keys())) {
-      if (k.startsWith('reg-clamped-') || k.startsWith('reg-removed-')) {
-        warnings.delete(k);
-      }
-    }
-    updateWarningUI && updateWarningUI();
-  }
-
-
-  // 日付移動ボタン
-  function moveDate(offset) {
-    const dateInput = document.getElementById('date');
-    const currentDate = new Date(dateInput.value || new Date());
-    currentDate.setDate(currentDate.getDate() + offset);
-    const yyyy = currentDate.getFullYear();
-    const mm = String(currentDate.getMonth() + 1).padStart(2, '0');
-    const dd = String(currentDate.getDate()).padStart(2, '0');
-    const newDate = `${yyyy}-${mm}-${dd}`;
-
-    // 変更があれば自動保存
-    if (hasUnsavedChanges()) {
-      // 保存完了後に日付を変える
-      save_shifts_and_move(newDate, dateInput);
-    } else {
-      dateInput.value = newDate;
-      dateInput.form.submit();
-    }
-  }
-
-  // 保存してから日付移動
-  // 日付移動時の処理
-  function save_shifts_and_move(newDate, dateInput) {
-    saveAllChanges(() => {
-      dateInput.value = newDate;
-      dateInput.form.submit();
-    });
-  }
-
-  function collectShiftChanges() {
-    return (changes || [])
-      .filter(c => {
-        const id = String(c.item.id || '');
-        if (id.startsWith('wish-')) return false;
-        return c.action !== 'update_reg' && c.action !== 'remove_reg';
-      })
-      .map(c => {
-        // ★ add のときは tmp_id を落としてサーバには送らない
-        if (c.action === 'add' && c.item && 'tmp_id' in c.item) {
-          const { tmp_id, ...safe } = c.item;
-          return { action: 'add', item: safe };
-        }
-        return c;
-      });
-  }
-
-
-  function buildSavePayload() {
-    const filteredChanges = collectShiftChanges();
-    const targetShiftIds = new Set();
-    filteredChanges.forEach(change => {
-      const sid = change?.item?.id;
-      if (typeof sid !== 'undefined') targetShiftIds.add(sid);
-    });
-    dirtyRegisterShiftIds.forEach(id => targetShiftIds.add(id));
-
-    const registers_by_shift = {};
-    const conflicts = [];
-
-    Array.from(targetShiftIds).forEach(rawId => {
-      const numericId = Number(rawId);
-      if (!Number.isFinite(numericId)) return;
-      const assignments = buildAssignmentsFromUI(numericId);
-      const overlap = detectRegisterOverlaps(assignments, selectedDate);
-      if (overlap.length) {
-        conflicts.push({
-          shiftId: numericId,
-          messages: overlap.map(c => c.message)
+      if (scrollContainer && customTimeAxis) {
+        // 横スクロール同期 - スクロールコンテナのスクロールに合わせて時間軸も移動
+        scrollContainer.addEventListener('scroll', function () {
+          // スクロール位置の同期
+          customTimeAxis.style.transform = `translateX(${scrollContainer.scrollLeft}px)`;
         });
       }
-      registers_by_shift[String(numericId)] = assignments.map(a => ({
-        register_number: a.register_number,
-        register_start_time: a.register_start_time,
-        register_end_time: a.register_end_time
-      }));
-    });
+    };
 
-    Array.from(targetShiftIds).forEach(rawId => {
-      const numericId = Number(rawId);
-      if (!Number.isFinite(numericId)) return;
-      const key = String(numericId);
-      if (!(key in registers_by_shift)) {
-        registers_by_shift[key] = [];
+    function getGroupColumnWidth() {
+      const groupElement = container.querySelector('.vis-group');
+      return groupElement ? groupElement.offsetWidth : 100; // fallback 100px
+    };
+
+    function generateHourlySlots(start, end) {
+      const slots = [];
+      const current = new Date(start);
+      current.setMinutes(0, 0, 0); // 時間ジャストにする
+
+      while (current < end) {
+        const slotStart = new Date(current);
+        const slotEnd = new Date(current);
+        slotEnd.setHours(slotEnd.getHours() + 1);
+        slots.push({ start: slotStart, end: slotEnd });
+        current.setHours(current.getHours() + 1);
       }
+
+      return slots;
+    };
+
+    // 「確定シフト」だけを true にする判定
+    function isConfirmedShiftItem(item) {
+      const id = String(item.id || '');
+      if (id.startsWith('reg-')) return false;                 // レジ帯（register-item）
+      if (id.startsWith('wish-')) return false;                // 希望背景
+      if (item.type === 'background') return false;            // 念のため
+      if (item.className && String(item.className).includes('register-item')) return false;
+      return true; // それ以外＝確定シフト
+    }
+
+    function calculateStaffCounts(slots, baseItems) {
+      const confirmed = (baseItems || items.get()).filter(isConfirmedShiftItem);
+      return slots.map(slot => {
+        const count = confirmed.filter(item => {
+          const itemStart = new Date(item.start);
+          const itemEnd = new Date(item.end);
+          return itemEnd > slot.start && itemStart < slot.end;
+        }).length;
+        return { label: `${slot.start.getHours()}:00〜${slot.end.getHours()}:00`, count };
+      });
+    };
+
+
+    function renderSummary(counts) {
+      const headerRow = document.getElementById('summaryHeaderRow');
+      const dataRow = document.getElementById('summaryDataRow');
+
+      headerRow.innerHTML = '';
+      dataRow.innerHTML = '';
+
+      // 合計スタッフ人数（確定シフトのみのユニーク staff ID）
+      const confirmedOnly = items.get().filter(isConfirmedShiftItem);
+      const allStaffIds = new Set(confirmedOnly.map(i => i.group));
+      const totalStaffCount = allStaffIds.size;
+
+      // ✅ ヘッダー左端セル → 「合計人数」
+      const headerTh = document.createElement('th');
+      headerTh.textContent = '合計人数';
+      headerTh.style.minWidth = labelSetWidth + 'px';
+      headerTh.style.width = labelSetWidth + 'px';
+      headerRow.appendChild(headerTh);
+
+      // ✅ データ行左端セル → 数値（合計人数）
+      const countTd = document.createElement('td');
+      countTd.textContent = totalStaffCount;
+      countTd.style.minWidth = labelSetWidth + 'px';
+      countTd.style.width = labelSetWidth + 'px';
+      dataRow.appendChild(countTd);
+
+      // ⏱ 時間帯のヘッダーと人数セルを追加
+      counts.forEach(c => {
+        const th = document.createElement('th');
+        th.textContent = c.label;
+        headerRow.appendChild(th);
+
+        const td = document.createElement('td');
+        td.textContent = `${c.count}人`;
+        dataRow.appendChild(td);
+      });
+    };
+
+
+    // 初回表示用
+    items.get().forEach(it => relabelIfShift(it));
+    refreshSummary();
+
+    document.getElementById('saveChangesBtn').addEventListener('click', function (e) {
+      if (warnings && warnings.size > 0) {
+        const lines = Array.from(warnings.values());
+        const msg = [
+          `注意：自動調整/削除などが ${warnings.size} 件あります。`,
+          '',
+          '— 詳細 —',
+          ...lines.map(s => `・${s}`)
+        ].join('\n');
+
+        const ok = confirm(msg);
+        if (!ok) {
+          e.preventDefault();
+          e.stopPropagation();
+          return false;
+        }
+      }
+      saveAllChanges();
     });
 
-    return {
-      changes: filteredChanges,
-      registers_by_shift,
-      conflicts
-    };
-  }
+    // シフトIDに紐づくレジ警告を一掃
+    function clearRegWarningsForShift(shiftId) {
+      if (!warnings || warnings.size === 0) return;
+      // 今のUIに存在する reg IDs を把握
+      const regs = items.get({ filter: it => isReg(it) && it.shift_id === shiftId });
+      const validKeys = new Set();
+      regs.forEach(r => {
+        validKeys.add(`reg-clamped-${r.id}`);
+        validKeys.add(`reg-removed-${r.id}`);
+      });
 
-  function saveAllChanges(postSuccess) {
-    if (!hasUnsavedChanges()) {
-      alert("変更はありません。");
-      return;
+      // 方式1：該当シフトのレジ警告は丸ごと消す（シンプル）
+      for (const k of Array.from(warnings.keys())) {
+        if (k.startsWith('reg-clamped-') || k.startsWith('reg-removed-')) {
+          warnings.delete(k);
+        }
+      }
+      updateWarningUI && updateWarningUI();
     }
 
-    const payload = buildSavePayload();
-    const noShiftChanges = payload.changes.length === 0;
-    const noRegisterPayload = Object.keys(payload.registers_by_shift).length === 0;
-    if (noShiftChanges && noRegisterPayload) {
-      alert("変更はありません。");
-      return;
+
+    // 日付移動ボタン
+    function moveDate(offset) {
+      const dateInput = document.getElementById('date');
+      const currentDate = new Date(dateInput.value || new Date());
+      currentDate.setDate(currentDate.getDate() + offset);
+      const yyyy = currentDate.getFullYear();
+      const mm = String(currentDate.getMonth() + 1).padStart(2, '0');
+      const dd = String(currentDate.getDate()).padStart(2, '0');
+      const newDate = `${yyyy}-${mm}-${dd}`;
+
+      // 変更があれば自動保存
+      if (hasUnsavedChanges()) {
+        // 保存完了後に日付を変える
+        save_shifts_and_move(newDate, dateInput);
+      } else {
+        dateInput.value = newDate;
+        selectedDate = newDate;
+        // ★ ページ遷移せず1日分だけ再ロード
+        loadDayItems(newDate);
+
+        // 未保存/警告をクリア（別日なので）
+        changes = [];
+        updateUnsavedIndicator && updateUnsavedIndicator();
+        warnings.clear();
+        updateWarningUI && updateWarningUI();
+      }
+      timeline.setWindow(
+        new Date(newDate + 'T08:00:00'),
+        new Date(newDate + 'T20:00:00')
+      );
+      timeline.setOptions({
+        min: new Date(newDate + 'T08:00:00'),
+        max: new Date(newDate + 'T20:00:00')
+      });
+
     }
 
-    if (payload.conflicts.length) {
-      const message = payload.conflicts.map(c => c.messages.join("\n")).join("\n");
-      alert(message || "レジの入力内容を確認してください。");
-      return;
+    // 保存してから日付移動
+    // 日付移動時の処理
+    function save_shifts_and_move(newDate, dateInput) {
+      saveAllChanges(() => {
+        dateInput.value = newDate;
+        selectedDate = newDate;
+        loadDayItems(newDate);
+
+        changes = [];
+        updateUnsavedIndicator && updateUnsavedIndicator();
+        warnings.clear();
+        updateWarningUI && updateWarningUI();
+      });
     }
 
-    const body = {
-      changes: payload.changes,
-      registers_by_shift: payload.registers_by_shift
-    };
+    function collectShiftChanges() {
+      return (changes || [])
+        .filter(c => {
+          const id = String(c.item.id || '');
+          if (id.startsWith('wish-')) return false;
+          return c.action !== 'update_reg' && c.action !== 'remove_reg';
+        })
+        .map(c => {
+          // ★ add のときは tmp_id を落としてサーバには送らない
+          if (c.action === 'add' && c.item && 'tmp_id' in c.item) {
+            const { tmp_id, ...safe } = c.item;
+            return { action: 'add', item: safe };
+          }
+          return c;
+        });
+    }
 
-    const saveBtn = document.getElementById('saveChangesBtn');
-    if (saveBtn) saveBtn.disabled = true;
 
-    fetch('{% url "shiftgenerator:save-shift-and-registers" %}', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRFToken': '{{ csrf_token }}'
-      },
-      body: JSON.stringify(body)
-    })
-    .then(response => response.json())
-    .then(result => {
-      if (!result.success) {
-        alert(result.error || "保存に失敗しました。");
-        if (saveBtn) saveBtn.disabled = false;
+    function buildSavePayload() {
+      const filteredChanges = collectShiftChanges();
+      const targetShiftIds = new Set();
+      filteredChanges.forEach(change => {
+        const sid = change?.item?.id;
+        if (typeof sid !== 'undefined') targetShiftIds.add(sid);
+      });
+      dirtyRegisterShiftIds.forEach(id => targetShiftIds.add(id));
+
+      const registers_by_shift = {};
+      const conflicts = [];
+
+      Array.from(targetShiftIds).forEach(rawId => {
+        const numericId = Number(rawId);
+        if (!Number.isFinite(numericId)) return;
+        const assignments = buildAssignmentsFromUI(numericId);
+        const overlap = detectRegisterOverlaps(assignments, selectedDate);
+        if (overlap.length) {
+          conflicts.push({
+            shiftId: numericId,
+            messages: overlap.map(c => c.message)
+          });
+        }
+        registers_by_shift[String(numericId)] = assignments.map(a => ({
+          register_number: a.register_number,
+          register_start_time: a.register_start_time,
+          register_end_time: a.register_end_time
+        }));
+      });
+
+      Array.from(targetShiftIds).forEach(rawId => {
+        const numericId = Number(rawId);
+        if (!Number.isFinite(numericId)) return;
+        const key = String(numericId);
+        if (!(key in registers_by_shift)) {
+          registers_by_shift[key] = [];
+        }
+      });
+
+      return {
+        changes: filteredChanges,
+        registers_by_shift,
+        conflicts
+      };
+    }
+
+    function saveAllChanges(postSuccess) {
+      if (!hasUnsavedChanges()) {
+        alert("変更はありません。");
         return;
       }
-      changes = [];
-      dirtyRegisterShiftIds.clear();
-      updateUnsavedIndicator();
-      if (saveBtn) saveBtn.disabled = false;
-      if (typeof postSuccess === 'function') {
-        postSuccess(result);
-      } else {
-        window.location.reload();
+
+      const payload = buildSavePayload();
+      const noShiftChanges = payload.changes.length === 0;
+      const noRegisterPayload = Object.keys(payload.registers_by_shift).length === 0;
+      if (noShiftChanges && noRegisterPayload) {
+        alert("変更はありません。");
+        return;
       }
-    })
-    .catch(err => {
-      console.error(err);
-      alert("保存に失敗しました。");
-      if (saveBtn) saveBtn.disabled = false;
-    });
-  }
+
+      if (payload.conflicts.length) {
+        const message = payload.conflicts.map(c => c.messages.join("\n")).join("\n");
+        alert(message || "レジの入力内容を確認してください。");
+        return;
+      }
+
+      const body = {
+        changes: payload.changes,
+        registers_by_shift: payload.registers_by_shift
+      };
+
+      const saveBtn = document.getElementById('saveChangesBtn');
+      if (saveBtn) saveBtn.disabled = true;
+
+      fetch('{% url "shiftgenerator:save-shift-and-registers" %}', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': '{{ csrf_token }}'
+        },
+        body: JSON.stringify(body)
+      })
+        .then(response => response.json())
+        .then(result => {
+          if (!result.success) {
+            alert(result.error || "保存に失敗しました。");
+            if (saveBtn) saveBtn.disabled = false;
+            return;
+          }
+          changes = [];
+          dirtyRegisterShiftIds.clear();
+          updateUnsavedIndicator();
+          if (saveBtn) saveBtn.disabled = false;
+          if (typeof postSuccess === 'function') {
+            postSuccess(result);
+          } else {
+            window.location.reload();
+          }
+        })
+        .catch(err => {
+          console.error(err);
+          alert("保存に失敗しました。");
+          if (saveBtn) saveBtn.disabled = false;
+        });
+    }
 
 
 
@@ -1820,35 +1961,35 @@ document.getElementById('saveChangesBtn').addEventListener('click', function(e) 
       if (d <= 15) {
         // 1〜15日 → 今月16日〜月末
         start = new Date(y, m, 16);
-        end   = new Date(y, m + 1, 0); // 月末日
+        end = new Date(y, m + 1, 0); // 月末日
       } else {
         // 16日以降 → 来月1日〜15日
         start = new Date(y, m + 1, 1);
-        end   = new Date(y, m + 1, 15);
+        end = new Date(y, m + 1, 15);
       }
 
       // 日付フォーマット関数
       function formatDateLocal(date) {
         const yyyy = date.getFullYear();
-        const mm   = String(date.getMonth() + 1).padStart(2, '0');
-        const dd   = String(date.getDate()).padStart(2, '0');
+        const mm = String(date.getMonth() + 1).padStart(2, '0');
+        const dd = String(date.getDate()).padStart(2, '0');
         return `${yyyy}-${mm}-${dd}`;
       }
 
       return {
         start: formatDateLocal(start),
-        end:   formatDateLocal(end)
+        end: formatDateLocal(end)
       };
     }
 
     // シフトコピー用 日付入力のデフォルト値を設定
     window.addEventListener('DOMContentLoaded', () => {
       const startInput = document.getElementById('startDate');
-      const endInput   = document.getElementById('endDate');
+      const endInput = document.getElementById('endDate');
       const range = getNextHalfMonthRange();
 
       if (startInput && !startInput.value) startInput.value = range.start;
-      if (endInput   && !endInput.value)   endInput.value   = range.end;
+      if (endInput && !endInput.value) endInput.value = range.end;
     });
 
 
@@ -1875,22 +2016,22 @@ document.getElementById('saveChangesBtn').addEventListener('click', function(e) 
       return m ? m[1] : t;
     }
 
-    
-    
+
+
 
     // 影響数（概算）を数える
-    function countTargetsForRange(startYmd, endYmd, staffIdOrNull){
+    function countTargetsForRange(startYmd, endYmd, staffIdOrNull) {
       const inRange = it => ymdStr(it.start) >= startYmd && ymdStr(it.start) <= endYmd;
-      const byStaff = it => (staffIdOrNull===null) || Number(it.group)===Number(staffIdOrNull);
+      const byStaff = it => (staffIdOrNull === null) || Number(it.group) === Number(staffIdOrNull);
 
       const shifts = items.get({ filter: it => isShift(it) && inRange(it) && byStaff(it) }).length;
-      const regs   = items.get({ filter: it => isReg(it)   && inRange(it) && byStaff(it) }).length;
+      const regs = items.get({ filter: it => isReg(it) && inRange(it) && byStaff(it) }).length;
       const wishes = items.get({ filter: it => String(it.id).startsWith('wish-') && inRange(it) && byStaff(it) }).length;
       return { shifts, regs, wishes };
     }
 
     // 「RESET」入力を求める確認
-    function promptTypedConfirm(message, keyword='RESET'){
+    function promptTypedConfirm(message, keyword = 'RESET') {
       return new Promise(resolve => {
         const input = prompt(`${message}\n\n続行するには ${keyword} と入力してください。`);
         resolve(input === keyword);
@@ -1898,11 +2039,11 @@ document.getElementById('saveChangesBtn').addEventListener('click', function(e) 
     }
 
     // 全体/個人 兼用の確認
-    async function confirmBulkResetSafely(startYmd, endYmd, staffIdOrNull){
-      const {shifts, regs, wishes} = countTargetsForRange(startYmd, endYmd, staffIdOrNull);
-      const who = (staffIdOrNull===null) ? '全スタッフ' : `スタッフID ${staffIdOrNull}`;
+    async function confirmBulkResetSafely(startYmd, endYmd, staffIdOrNull) {
+      const { shifts, regs, wishes } = countTargetsForRange(startYmd, endYmd, staffIdOrNull);
+      const who = (staffIdOrNull === null) ? '全スタッフ' : `スタッフID ${staffIdOrNull}`;
       const msg =
-    `【確認】${who} の ${startYmd} ～ ${endYmd} を
+        `【確認】${who} の ${startYmd} ～ ${endYmd} を
     「確定シフト＋レジ全削除 → 希望シフトで再構成」します。
 
     おおよその影響（現在ロード中日の概算）：
@@ -1914,12 +2055,12 @@ document.getElementById('saveChangesBtn').addEventListener('click', function(e) 
       return await promptTypedConfirm(msg, 'RESET');
     }
 
-     
+
 
     // 📋 指定期間の全スタッフを “希望どおり” にリセット（サーバ側で実行）
     document.getElementById('copyShiftsBtn').addEventListener('click', async function () {
       const start = document.getElementById('startDate').value;
-      const end   = document.getElementById('endDate').value;
+      const end = document.getElementById('endDate').value;
       if (!start || !end) {
         alert('期間を指定してください');
         return;
@@ -1938,7 +2079,7 @@ document.getElementById('saveChangesBtn').addEventListener('click', function(e) 
           },
           body: JSON.stringify({
             start: start,
-            end:   end,
+            end: end,
             staff_id: null,   // 全員
           }),
         });
@@ -1959,25 +2100,25 @@ document.getElementById('saveChangesBtn').addEventListener('click', function(e) 
 
 
 
-    
+
     /* ===== 要素取得 ===== */
-    const modal      = document.getElementById('staffModal');
+    const modal = document.getElementById('staffModal');
     const modalTitle = document.getElementById('staffModalTitle');
     const modalStart = document.getElementById('modalStart');
-    const modalEnd   = document.getElementById('modalEnd');
+    const modalEnd = document.getElementById('modalEnd');
     const modalApply = document.getElementById('modalApply');
 
     /* ===== スタッフ名クリックでモーダル表示 ===== */
     document.addEventListener('click', e => {
       if (!e.target.classList.contains('staff-label')) return;
 
-      const id   = e.target.dataset.id;
+      const id = e.target.dataset.id;
       const name = e.target.dataset.name;
 
       // 毎回、「次の半月」の期間をセット
       const range = getNextHalfMonthRange();
       modalStart.value = range.start;
-      modalEnd.value   = range.end;
+      modalEnd.value = range.end;
 
       modal.dataset.staffId = id;
       modalTitle.textContent = `📋 ${name} のシフト希望を反映`;
@@ -1988,8 +2129,8 @@ document.getElementById('saveChangesBtn').addEventListener('click', function(e) 
     // 📋 指定スタッフの希望どおりにリセット（サーバ側で実行）
     modalApply.addEventListener('click', async () => {
       const staffId = Number(modal.dataset.staffId);  // モーダルを開くときに dataset.staffId に入れてあるやつ
-      const start   = modalStart.value;
-      const end     = modalEnd.value;
+      const start = modalStart.value;
+      const end = modalEnd.value;
 
       if (!start || !end) {
         alert('期間を入力してください');
@@ -2009,7 +2150,7 @@ document.getElementById('saveChangesBtn').addEventListener('click', function(e) 
           },
           body: JSON.stringify({
             start: start,
-            end:   end,
+            end: end,
             staff_id: staffId,
           }),
         });
@@ -2036,19 +2177,19 @@ document.getElementById('saveChangesBtn').addEventListener('click', function(e) 
 
 
     const startInput = document.getElementById('startDate');
-    const endInput   = document.getElementById('endDate');
+    const endInput = document.getElementById('endDate');
 
     function toggleStaffButtons() {
       const enabled = startInput.value && endInput.value;
       document.querySelectorAll('.staff-copy-btn').forEach(b => b.disabled = !enabled);
     }
     startInput.addEventListener('change', toggleStaffButtons);
-    endInput  .addEventListener('change', toggleStaffButtons);
+    endInput.addEventListener('change', toggleStaffButtons);
     window.addEventListener('DOMContentLoaded', toggleStaffButtons);
 
 
 
-   // === Zキーでズーム有効／離すと無効 ===
+    // === Zキーでズーム有効／離すと無効 ===
     let zoomMode = false;
 
     document.addEventListener('keydown', e => {
@@ -2076,4 +2217,5 @@ document.getElementById('saveChangesBtn').addEventListener('click', function(e) 
 
   </script>
 </body>
+
 </html>
