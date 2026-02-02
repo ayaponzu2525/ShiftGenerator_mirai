@@ -54,6 +54,28 @@ def staff_management(request):
         'show_all': show_all,
     })
 
+def get_display_staff_for_date(target_date):
+    """
+    表示対象スタッフ：
+      - is_active=True は全員
+      - is_active=False は、その日に confirmed シフトがある人だけ
+    """
+    active_staff = Staff.objects.filter(is_active=True)
+
+    inactive_staff = Staff.objects.filter(is_active=False).filter(
+        Exists(
+            ShiftPreference.objects.filter(
+                staff=OuterRef('pk'),
+                date=target_date,
+                confirmed_starttime__isnull=False,
+                confirmed_endtime__isnull=False,
+            )
+        )
+    )
+
+    # 合体＆ID順（好みでname順でもOK）
+    staff = sorted(list(active_staff) + list(inactive_staff), key=lambda s: s.id)
+    return staff
 
 @user_passes_test(lambda u: u.is_superuser)
 def staff_disable(request, staff_id):
@@ -1179,6 +1201,9 @@ def api_shift_items(request):
     target_date = parse_date(date_str) if date_str else timezone.localdate()
     if target_date is None:
         target_date = timezone.localdate()
+    
+    # ★ 表示対象スタッフ（active + その日に確定シフトがある inactive）
+    staff = get_display_staff_for_date(target_date)
 
     # --- 確定シフト ---
     preferences = ShiftPreference.objects.filter(
@@ -1247,7 +1272,8 @@ def api_shift_items(request):
 
     return JsonResponse({
         "date": target_date.strftime("%Y-%m-%d"),
-        "items": shift_items + reg_items + wish_items
+        "items": shift_items + reg_items + wish_items,
+        "groups": [{"id": s.id, "name": s.name} for s in staff],
     })
 
 
@@ -1283,25 +1309,8 @@ def shift_management(request):
         # confirmed_starttime=None でもOK（未確定のみ出したい場合）
     )
 
-         # 有効スタッフ（is_active=True）は全員表示
-    active_staff = list(Staff.objects.filter(is_active=True))
+    staff = get_display_staff_for_date(target_date)
 
-    # 無効スタッフ（is_active=False）はその日「確定シフト」がある場合だけ表示
-    inactive_staff = list(
-        Staff.objects.filter(is_active=False).filter(
-            Exists(
-                ShiftPreference.objects.filter(
-                    staff=OuterRef('pk'),
-                    date=target_date,
-                    confirmed_starttime__isnull=False,
-                    confirmed_endtime__isnull=False
-                )
-            )
-        )
-    )
-
-    # Pythonで合体＆ID順ソート
-    staff = sorted(active_staff + inactive_staff, key=lambda s: s.id)
 
     for preference in preferences:
         preference.confirmed_starttime = datetime.combine(preference.date, preference.confirmed_starttime)

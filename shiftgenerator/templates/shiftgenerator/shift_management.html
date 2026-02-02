@@ -308,7 +308,28 @@
         }));
       items.add(parsed);
 
-      // 画面のタイトル/サマリ更新も必要ならここで呼ぶ
+      // ★ groups（スタッフ一覧）をAPIの結果で丸ごと更新
+      if (data.groups) {
+        groups.clear();
+        groups.add(data.groups); // {id, name} をそのまま入れる
+
+        // timeline が生成済みなら反映
+        if (typeof timeline !== 'undefined' && timeline) {
+          timeline.setGroups(groups);
+          timeline.redraw();
+        }
+
+        // 高さも再計算（無効スタッフが出たり消えたりするため）
+        const staffCount = groups.length;
+        const rowHeight = 40;
+        const extraPadding = 60;
+        document.getElementById('timeline').style.height =
+          (staffCount * rowHeight + extraPadding) + 'px';
+      }
+
+      console.log('API groups count:', (data.groups || []).length);
+      console.log('Timeline groups count:', groups.length);
+
       scheduleRefreshSummary && scheduleRefreshSummary();
     }
 
@@ -538,21 +559,21 @@
     }
 
     // ★ 営業時間（この画面では 08:00〜20:00 に固定）
-    const BUSINESS_START = new Date(selectedDate + 'T08:00:00');
-    const BUSINESS_END = new Date(selectedDate + 'T20:00:00');
+      function BUSINESS_START() { return new Date(selectedDate + 'T08:00:00'); }
+      function BUSINESS_END()   { return new Date(selectedDate + 'T20:00:00'); }
 
     // ★ シフトを営業時間内にクランプする
     function clampToBusinessHours(item) {
       let s = (item.start instanceof Date) ? new Date(item.start) : new Date(item.start);
-      let e = (item.end instanceof Date) ? new Date(item.end) : new Date(item.end);
+      let e = (item.end   instanceof Date) ? new Date(item.end)   : new Date(item.end);
 
-      if (s < BUSINESS_START) s = new Date(BUSINESS_START);
-      if (e > BUSINESS_END) e = new Date(BUSINESS_END);
+      if (s < BUSINESS_START()) s = new Date(BUSINESS_START());
+      if (e > BUSINESS_END())   e = new Date(BUSINESS_END());
 
       // 万一 end <= start になったときは、最低1時間だけ確保
       if (e <= s) {
         const oneHourLater = new Date(s.getTime() + 60 * 60000);
-        e = oneHourLater > BUSINESS_END ? new Date(BUSINESS_END) : oneHourLater;
+        e = oneHourLater > BUSINESS_END() ? new Date(BUSINESS_END()) : oneHourLater;
       }
 
       item.start = s;
@@ -560,10 +581,11 @@
       return item;
     }
 
+
     // ★ シフト移動用クランプ：長さを保ったまま 8:00〜20:00 の中に収める
     function clampShiftMoveToBusinessHours(item) {
       let s = (item.start instanceof Date) ? new Date(item.start) : new Date(item.start);
-      let e = (item.end instanceof Date) ? new Date(item.end) : new Date(item.end);
+      let e = (item.end   instanceof Date) ? new Date(item.end)   : new Date(item.end);
 
       const dur = e - s; // シフト長（ms）
 
@@ -573,14 +595,14 @@
       }
 
       // 左にはみ出し → 開店に合わせて右にスライド
-      if (s < BUSINESS_START) {
-        s = new Date(BUSINESS_START);
+      if (s < BUSINESS_START()) {
+        s = new Date(BUSINESS_START());
         e = new Date(s.getTime() + dur);
       }
 
       // 右にはみ出し → 閉店に合わせて左にスライド
-      if (e > BUSINESS_END) {
-        e = new Date(BUSINESS_END);
+      if (e > BUSINESS_END()) {
+        e = new Date(BUSINESS_END());
         s = new Date(e.getTime() - dur);
       }
 
@@ -589,12 +611,92 @@
       return item;
     }
 
+  // 新規追加(onAdd)専用：ドラッグした側だけをクランプ（反対側は極力動かさない）
+  function clampAddKeepAnchor(item, movedSide /* 'start' or 'end' */) {
+    let s = (item.start instanceof Date) ? new Date(item.start) : new Date(item.start);
+    let e = (item.end   instanceof Date) ? new Date(item.end)   : new Date(item.end);
+
+    const BS = BUSINESS_START();
+    const BE = BUSINESS_END();
+
+    // まず営業時間内に入れる（動いた側だけ）
+    if (movedSide === 'end') {
+      if (e > BE) e = new Date(BE);
+      if (e < BS) e = new Date(BS);
+      // start は固定。ただし start 自体が営業時間外なら入れる
+      if (s < BS) s = new Date(BS);
+      if (s > BE) s = new Date(BE);
+    } else { // movedSide === 'start'
+      if (s < BS) s = new Date(BS);
+      if (s > BE) s = new Date(BE);
+      // end は固定。ただし end 自体が営業時間外なら入れる
+      if (e > BE) e = new Date(BE);
+      if (e < BS) e = new Date(BS);
+    }
+
+    // 順序が逆になったら直す（ドラッグ左の場合など）
+    if (e < s) { const tmp = s; s = e; e = tmp; }
+
+    // 最低60分確保（できるだけ "動いた側" を動かす）
+    const MIN_MS = 60 * 60000;
+    if ((e - s) < MIN_MS) {
+      if (movedSide === 'end') {
+        // end側を延ばす（BEまで）
+        let newE = new Date(s.getTime() + MIN_MS);
+        if (newE > BE) newE = new Date(BE);
+        e = newE;
+
+        // それでも足りない（sがBE寄り）なら、最後の手段で start を動かす
+        if ((e - s) < MIN_MS) {
+          s = new Date(Math.max(BS.getTime(), e.getTime() - MIN_MS));
+        }
+      } else {
+        // start側を詰める（BSまで）
+        let newS = new Date(e.getTime() - MIN_MS);
+        if (newS < BS) newS = new Date(BS);
+        s = newS;
+
+        // それでも足りないなら、最後の手段で end を動かす
+        if ((e - s) < MIN_MS) {
+          e = new Date(Math.min(BE.getTime(), s.getTime() + MIN_MS));
+        }
+      }
+    }
+
+    item.start = s;
+    item.end = e;
+    return item;
+  }
+
+  //15分単位にする
+  function floorToStep(d, stepMin = 15) {
+    const x = new Date(d);
+    x.setSeconds(0, 0);
+    const m = x.getMinutes();
+    x.setMinutes(Math.floor(m / stepMin) * stepMin);
+    return x;
+  }
+  function ceilToStep(d, stepMin = 15) {
+    const x = new Date(d);
+    x.setSeconds(0, 0);
+    const m = x.getMinutes();
+    x.setMinutes(Math.ceil(m / stepMin) * stepMin);
+    return x;
+  }
+
+
+
 
     // ユーティリティ（分まで）
     function hhmm(d) {
       const t = (d instanceof Date) ? d : new Date(d);
       return String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
     }
+
+    //global変数を追加
+    let __addDown = null;   // {time: Date, group: number}
+    let __addUp = null;     // {time: Date, group: number}
+
 
     // オプション設定
     var options = {
@@ -622,54 +724,86 @@
       onAdd: function (item, callback) {
         try {
           const allowAdd = isCtrlDrag || ctrlHeld;
+          if (!allowAdd) { callback(null); return; }
 
-          // console.debug('[onAdd] raw:', {
-          //   start: item.start,
-          //   end: item.end,
-          //   group: item.group,
-          //   isCtrlDrag,
-          //   ctrlHeld,
-          //   allowAdd
-          // });
+          item.className = 'new-shift';
 
-          if (!allowAdd) {
-            // console.debug('[onAdd] canceled: not ctrl-drag/hold');
-            callback(null);
-            return;
+          // 1) まず start/end を確定（mouseDown/up を最優先）
+          let start, end;
+
+          if (__addDown && __addUp && Number(item.group) === __addDown.group) {
+            start = new Date(__addDown.time);
+            end   = new Date(__addUp.time);
+          } else {
+            start = new Date(item.start);
+            end   = item.end ? new Date(item.end) : new Date(start.getTime() + 60 * 60000);
           }
 
-          let start = new Date(item.start);
-          let end = item.end ? new Date(item.end)
-            : new Date(start.getTime() + 60 * 60000);
-          item.className = 'new-shift'; // ★ 新規シフト用クラス！
+          // 秒・ミリ秒は落とす
+          start.setSeconds(0, 0);
+          end.setSeconds(0, 0);
 
+          // movedSide（左ドラッグか右ドラッグか）
+          let movedSide = 'end';
+          if (__addDown && __addUp) movedSide = (__addUp.time >= __addDown.time) ? 'end' : 'start';
+
+          // 逆転なら入れ替え
           if (end < start) [start, end] = [end, start];
-          if ((end - start) < 60 * 1000) {
-            end = new Date(start.getTime() + 60 * 60000);
+
+          // 2) 15分刻みに丸め（方向で floor/ceil を使い分け）
+          const STEP = 15;
+          if (movedSide === 'end') {
+            start = floorToStep(start, STEP);
+            end   = ceilToStep(end, STEP);
+          } else {
+            // 左ドラッグ：endをなるべく固定したいので end は floor、start も floor
+            end   = floorToStep(end, STEP);
+            start = floorToStep(start, STEP);
           }
 
-          item.start = start;
-          item.end = end;
+          // 3) 最低60分（丸めた後にやるのがコツ）
+          const MIN_MS = 60 * 60000;
+          if ((end - start) < MIN_MS) {
+            if (movedSide === 'end') {
+              end = new Date(start.getTime() + MIN_MS);
+            } else {
+              start = new Date(end.getTime() - MIN_MS);
+            }
+            // ここでまた秒を落として 15分に揃える
+            start.setSeconds(0, 0);
+            end.setSeconds(0, 0);
+            start = floorToStep(start, STEP);
+            end   = ceilToStep(end, STEP);
+          }
 
-          // ★ 新規シフトも営業時間内に収める
-          clampToBusinessHours(item);
+          // 4) item に反映（←これが無かったのが1分単位の原因）
+          item.start = start;
+          item.end   = end;
+
+          // 5) 営業時間内へ（反対側をなるべく動かさない）
+          clampAddKeepAnchor(item, movedSide);
 
           onTaskBarChanged('add', item);
+          callback(item);
 
-          callback(item);            // ← もう消えないはず
           relabelIfShift(item);
           scheduleRefreshSummary();
           updateUnsavedIndicator && updateUnsavedIndicator();
 
         } catch (e) {
-          // console.error('[onAdd] error', e, item);
-          // alert('onAdd中にエラー: ' + e.message);
           callback(null);
         } finally {
           isCtrlDrag = false;
+          __addDown = null;
+          __addUp = null;
         }
       },
       onUpdate: function (item, callback) {
+        // ★ 新規シフトは onAdd 側で確定済み。move/update 側のクランプは当てない
+        if (String(item.className || '').includes('new-shift')) {
+          callback(item);
+          return;
+        }
         if (!isShift(item)) { callback(item); return; }
 
         // ★ 変更前の状態を控えておく（一部だけでOK）
@@ -736,6 +870,11 @@
       },
 
       onMove: function (item, callback) {
+        // ★ 新規シフトは onAdd 側で確定済み。move/update 側のクランプは当てない
+        if (String(item.className || '').includes('new-shift')) {
+          callback(item);
+          return;
+        }
         if (!isShift(item)) { callback(item); return; }
 
         // ★ 変更前の状態を控えておく
@@ -901,6 +1040,23 @@
     // メインのタイムライン
     var container = document.getElementById('timeline');
     var timeline = new vis.Timeline(container, items, groups, options);
+
+    timeline.on('mouseDown', function (props) {
+      if (!(ctrlHeld || (props.event && props.event.ctrlKey))) return;
+      if (!props.group) return;        // スタッフ行じゃない場所は無視
+      if (props.item) return;          // 既存アイテム上は無視（追加じゃない）
+
+      __addDown = { time: props.time, group: Number(props.group) };
+      __addUp = null;
+    });
+
+    timeline.on('mouseUp', function (props) {
+      if (!__addDown) return;
+      if (!props.group) return;
+
+      __addUp = { time: props.time, group: Number(props.group) };
+    });
+
 
     let isCtrlDrag = false;
     let ctrlHeld = false;
@@ -1771,6 +1927,11 @@
       updateWarningUI && updateWarningUI();
     }
 
+    function setUrlDate(ymd) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('date', ymd);
+      history.replaceState({}, '', url); // ページ遷移なしでURLだけ更新
+    }
 
     // 日付移動ボタン
     function moveDate(offset) {
@@ -1789,6 +1950,7 @@
       } else {
         dateInput.value = newDate;
         selectedDate = newDate;
+        setUrlDate(newDate);
         // ★ ページ遷移せず1日分だけ再ロード
         loadDayItems(newDate);
 
@@ -1815,6 +1977,7 @@
       saveAllChanges(() => {
         dateInput.value = newDate;
         selectedDate = newDate;
+        setUrlDate(newDate);
         loadDayItems(newDate);
 
         changes = [];
@@ -1938,6 +2101,7 @@
           if (typeof postSuccess === 'function') {
             postSuccess(result);
           } else {
+            setUrlDate(selectedDate);
             window.location.reload();
           }
         })
