@@ -233,6 +233,9 @@
           <button class="btn btn-outline-primary btn-sm mt-2" id="addRegisterBtn">＋ 新規割当</button>
         </div>
         <div class="modal-footer">
+          <button id="deleteShiftBtn" class="btn btn-danger">このシフトを削除</button>
+          <button id="deleteAllRegsBtn" class="btn btn-outline-danger">このシフトのレジを全削除</button>
+
           <button id="saveRegisterBtn" class="btn btn-primary">保存</button>
           <button class="btn btn-secondary" data-dismiss="modal">閉じる</button>
         </div>
@@ -469,6 +472,21 @@
       updateUnsavedIndicator();
     }
 
+    function pushRemoveRegChange(shiftId, regId) {
+      const sid = String(shiftId);
+      const rid = String(regId);
+
+      // そのレジに対する update_reg が既に積まれてたら削除（削除が優先）
+      changes = changes.filter(c => !(c.action === 'update_reg' && String(c?.item?.id) === rid));
+
+      // remove_reg を多重に積まない
+      const already = changes.some(c => c.action === 'remove_reg' && String(c?.item?.id) === rid);
+      if (!already) {
+        changes.push({ action: 'remove_reg', item: { id: rid, shift_id: sid } });
+      }
+    }
+
+
     const dirtyRegisterShiftIds = new Set(); // 自動クランプ等でUIだけ変わったレジがあるシフト
     const unsavedIndicator = document.getElementById('unsavedIndicator');
     const MIN_REG_MIN = 5;              // 5分未満
@@ -494,18 +512,20 @@
 
       const key = String(shiftId);
 
-      // ★ すでにタイムライン上に存在しないシフトならゴミ扱い
-      //    → dirty に入れず、念のため削除して終了
       const item = items.get(shiftId);
       if (!item) {
         dirtyRegisterShiftIds.delete(key);
+        registersDraftByShift.delete(key); // ★ついでに掃除
         return;
       }
 
-      // ここまで来たら「まだ生きてるシフト」なので dirty として扱う
+      // ★ここが肝：今のUI状態を draft に焼く（これで「開き直すと戻る」が消える）
+      registersDraftByShift.set(key, cloneRegs(buildAssignmentsFromUI(Number(shiftId))));
+
       dirtyRegisterShiftIds.add(key);
       updateUnsavedIndicator();
     }
+
 
     let __bulkRunning = false;
     window.addEventListener('beforeunload', function (event) {
@@ -693,9 +713,40 @@
       return String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
     }
 
+    // ===== ドラッグ種別の推定 =====
+    const __dragBase = new Map(); // id -> {s,e}
+
+    function inferDragMode(baseS, baseE, curS, curE) {
+      const EPS = 1000; // 1秒誤差は同一扱い
+      const dur0 = baseE - baseS;
+      const dur1 = curE - curS;
+
+      const ds = curS - baseS;
+      const de = curE - baseE;
+
+      const startSame = Math.abs(ds) < EPS;
+      const endSame   = Math.abs(de) < EPS;
+      const durSame   = Math.abs(dur1 - dur0) < EPS;
+
+      // 典型ケース
+      if (!startSame && !endSame && durSame && Math.abs(ds - de) < EPS) return 'move';
+      if (!startSame && endSame) return 'resizeStart';
+      if (startSame && !endSame) return 'resizeEnd';
+
+      // どっちも動いてる場合（例: 逆方向ドラッグ/境界で補正された等）
+      if (!durSame) {
+        // 長さが変わってるなら「より大きく動いた側が掴んだ側」っぽい
+        return (Math.abs(ds) > Math.abs(de)) ? 'resizeStart' : 'resizeEnd';
+      }
+      // 最後は move 扱いに倒す（安全）
+      return 'move';
+    }
+
+
     //global変数を追加
     let __addDown = null;   // {time: Date, group: number}
     let __addUp = null;     // {time: Date, group: number}
+    let __justAddedId = null;
 
 
     // オプション設定
@@ -785,6 +836,9 @@
 
           onTaskBarChanged('add', item);
           callback(item);
+          // ★ onAdd直後に勝手に走る onMove/onUpdate を1回だけ無視したい
+          __justAddedId = item.id;
+          setTimeout(() => { __justAddedId = null; }, 50); // 50msで十分
 
           relabelIfShift(item);
           scheduleRefreshSummary();
@@ -799,153 +853,154 @@
         }
       },
       onUpdate: function (item, callback) {
-        // ★ 新規シフトは onAdd 側で確定済み。move/update 側のクランプは当てない
-        if (String(item.className || '').includes('new-shift')) {
+        try {
+          if (__justAddedId && item.id === __justAddedId) { callback(item); return; }
+          if (!isShift(item)) { callback(item); return; }
+
+          const beforeItem = items.get(item.id);
+          const beforeStart = beforeItem ? ms(beforeItem.start) : null;
+          const beforeEnd   = beforeItem ? ms(beforeItem.end)   : null;
+
+          const proposedStart = ms(item.start);
+          const proposedEnd   = ms(item.end);
+
           callback(item);
-          return;
-        }
-        if (!isShift(item)) { callback(item); return; }
 
-        // ★ 変更前の状態を控えておく（一部だけでOK）
-        const beforeItem = items.get(item.id);
-        const beforeStart = beforeItem ? ms(beforeItem.start) : null;
-        const beforeEnd = beforeItem ? ms(beforeItem.end) : null;
+          let moved = items.get(item.id);
+          if (!moved) return;
 
-        // 先に反映して位置（長さ）を確定
-        callback(item);
+          const mode = inferDragMode(beforeStart, beforeEnd, proposedStart, proposedEnd);
 
-        // シフト自身の表示＆保存記録
-        let moved = items.get(item.id);
-        if (!moved) return;
+          if (mode === 'move') moved = clampShiftMoveToBusinessHours(moved);
+          else if (mode === 'resizeEnd') moved = clampAddKeepAnchor(moved, 'end');
+          else moved = clampAddKeepAnchor(moved, 'start');
 
-        // ★ 営業時間内にクランプして更新
-        moved = clampToBusinessHours(moved);
-        items.update(moved);
+          items.update(moved);
 
-        // ★ クランプ後の値を取得
-        const afterStart = ms(moved.start);
-        const afterEnd = ms(moved.end);
+          const finalStart = ms(moved.start);
+          const finalEnd   = ms(moved.end);
 
-        // ラベルは常に最新にしてOK
-        relabelIfShift(moved);
+          relabelIfShift(moved);
 
-        // ★ 変更前と全く同じ（8→8, 12→12）の場合はここで終了
-        if (beforeStart === afterStart && beforeEnd === afterEnd) {
-          // → 見た目もDB的にも何も変わっていない扱い
-          return;
-        }
+          if (beforeStart === finalStart && beforeEnd === finalEnd) return;
 
-        // ここまで来たら「本当に時間が変わった」ときだけ
-        onTaskBarChanged('update', moved);
+          onTaskBarChanged('update', moved);
 
-        // 伸縮に伴うレジのクランプ（onMoveと同じロジック）
-        const regs = items.get({ filter: it => isReg(it) && it.shift_id === item.id });
-        if (!regs.length) return;
-        const updates = [], removes = [];
-        regs.forEach(r => {
-          const before = { start: new Date(r.start), end: new Date(r.end) };
-          const clamped = clampToShift(moved, r);
-          if (clamped) {
-            const changed = ms(clamped.start) !== ms(r.start) || ms(clamped.end) !== ms(r.end);
-            if (changed) updates.push(clamped);
-          } else {
-            removes.push(r.id);
-          }
-        });
-        if (updates.length) items.update(updates);
-        if (removes.length) items.remove(removes);
-        clearRegWarningsForShift(item.id);   // 古い警告を掃除
-        markRegisterDirty(item.id);
-      },
-      onMoving: function (item, callback) {
-        // シフト以外（レジとか）は素通し
-        if (!isShift(item)) {
-          callback(item);
-          return;
-        }
-
-        // ドラッグ中の見た目も 8:00〜20:00 内に収める
-        clampShiftMoveToBusinessHours(item);
-        callback(item);
-      },
-
-      onMove: function (item, callback) {
-        // ★ 新規シフトは onAdd 側で確定済み。move/update 側のクランプは当てない
-        if (String(item.className || '').includes('new-shift')) {
-          callback(item);
-          return;
-        }
-        if (!isShift(item)) { callback(item); return; }
-
-        // ★ 変更前の状態を控えておく
-        const beforeItem = items.get(item.id);
-        const beforeStart = beforeItem ? ms(beforeItem.start) : null;
-        const beforeEnd = beforeItem ? ms(beforeItem.end) : null;
-
-        // 先に反映して位置を確定
-        callback(item);
-
-        // シフト自身の表示＆保存記録
-        let moved = items.get(item.id);
-        if (!moved) return;
-
-        // ★ 営業時間内にクランプして更新
-        moved = clampShiftMoveToBusinessHours(moved);
-        items.update(moved);
-
-        const afterStart = ms(moved.start);
-        const afterEnd = ms(moved.end);
-
-        relabelIfShift(moved);
-
-        // ★ 見た目上もロジック上も変わっていないなら、ここで終わり
-        if (beforeStart === afterStart && beforeEnd === afterEnd) {
-          return;
-        }
-
-        // 本当に位置が変わったときだけ、未保存扱いにする
-        onTaskBarChanged('update', moved);
-
-        // 紐づくレジ（同じ shift_id）
-        const regs = items.get({ filter: it => isReg(it) && it.shift_id === item.id });
-        if (!regs.length) return;
-
-        const updates = [], removes = [];
-
-        regs.forEach(r => {
-          const inside = ms(r.start) >= ms(moved.start) && ms(r.end) <= ms(moved.end);
-          if (inside) return;
-
-          const before = { start: new Date(r.start), end: new Date(r.end) };
-          const clamped = clampToShift(moved, r);
-
-          if (clamped) {
-            const changed = ms(clamped.start) !== ms(r.start) || ms(clamped.end) !== ms(r.end);
-            if (changed) {
-              updates.push(clamped);
-
-              const nowInside = ms(clamped.start) >= ms(moved.start) && ms(clamped.end) <= ms(moved.end);
-              if (!nowInside) {
-                addWarning(
-                  `reg-clamped-${r.id}`,
-                  `調整: レジ${r.register_number || '?'}（${r.id}） ${fmtHHMM(before.start)}–${fmtHHMM(before.end)} → ${fmtHHMM(clamped.start)}–${fmtHHMM(clamped.end)}（はみ出し）`
-                );
+          // レジクランプ（onMove と同じ）
+          const regs = items.get({ filter: it => isReg(it) && it.shift_id === item.id });
+          if (regs.length) {
+            const updates = [], removes = [];
+            regs.forEach(r => {
+              const clamped = clampToShift(moved, r);
+              if (clamped) {
+                if (ms(clamped.start) !== ms(r.start) || ms(clamped.end) !== ms(r.end)) updates.push(clamped);
+              } else {
+                removes.push(r.id);
               }
-            }
-          } else {
-            removes.push(r.id);
-            addWarning(
-              `reg-removed-${r.id}`,
-              `削除: レジ${r.register_number || '?'}（${r.id}） ${fmtHHMM(before.start)}–${fmtHHMM(before.end)}（0分/5分未満）`
-            );
+            });
+            if (updates.length) items.update(updates);
+            if (removes.length) items.remove(removes);
           }
-        });
 
-        if (updates.length) items.update(updates);
-        if (removes.length) items.remove(removes);
+          clearRegWarningsForShift(item.id);
+          markRegisterDirty(item.id);
 
-        clearRegWarningsForShift(item.id);
-        markRegisterDirty(item.id);
+        } finally {
+          __dragBase.delete(item.id);
+        }
+      },
+
+      onMoving: function (item, callback) {
+        if (!isShift(item)) { callback(item); return; }
+
+        // ドラッグ開始時点（items側はまだ旧値のまま、が前提）
+        const base = __dragBase.get(item.id) || (() => {
+          const before = items.get(item.id);
+          const b = before ? { s: ms(before.start), e: ms(before.end) }
+                          : { s: ms(item.start),   e: ms(item.end) };
+          __dragBase.set(item.id, b);
+          return b;
+        })();
+
+        const curS = ms(item.start);
+        const curE = ms(item.end);
+        const mode = inferDragMode(base.s, base.e, curS, curE);
+
+        if (mode === 'move') {
+          // 移動中：長さ維持クランプ
+          clampShiftMoveToBusinessHours(item);
+        } else if (mode === 'resizeEnd') {
+          // 右端伸縮：start をできるだけ固定して end だけ営業時間に押し込む
+          clampAddKeepAnchor(item, 'end');
+        } else {
+          // 左端伸縮：end をできるだけ固定して start だけ営業時間に押し込む
+          clampAddKeepAnchor(item, 'start');
+        }
+
+        callback(item);
+      },
+      onMove: function (item, callback) {
+        try {
+          if (__justAddedId && item.id === __justAddedId) { callback(item); return; }
+          if (!isShift(item)) { callback(item); return; }
+
+          const beforeItem = items.get(item.id);
+          const beforeStart = beforeItem ? ms(beforeItem.start) : null;
+          const beforeEnd   = beforeItem ? ms(beforeItem.end)   : null;
+
+          // ★ ドラッグで提案された値（ここで確保）
+          const proposedStart = ms(item.start);
+          const proposedEnd   = ms(item.end);
+
+          // vis に一旦反映
+          callback(item);
+
+          // 反映後の items を取得してクランプ
+          let moved = items.get(item.id);
+          if (!moved) return;
+
+          const mode = inferDragMode(beforeStart, beforeEnd, proposedStart, proposedEnd);
+
+          if (mode === 'move') moved = clampShiftMoveToBusinessHours(moved);
+          else if (mode === 'resizeEnd') moved = clampAddKeepAnchor(moved, 'end');
+          else moved = clampAddKeepAnchor(moved, 'start');
+
+          items.update(moved);
+
+          // クランプ後の最終値
+          const finalStart = ms(moved.start);
+          const finalEnd   = ms(moved.end);
+
+          relabelIfShift(moved);
+
+          // 変化が無いなら何もしない
+          if (beforeStart === finalStart && beforeEnd === finalEnd) return;
+
+          onTaskBarChanged('update', moved);
+
+          // レジをシフト内に収める（必要なときだけ）
+          const regs = items.get({ filter: it => isReg(it) && it.shift_id === item.id });
+          if (regs.length) {
+            const updates = [], removes = [];
+            regs.forEach(r => {
+              const clamped = clampToShift(moved, r);
+              if (clamped) {
+                if (ms(clamped.start) !== ms(r.start) || ms(clamped.end) !== ms(r.end)) updates.push(clamped);
+              } else {
+                removes.push(r.id);
+              }
+            });
+            if (updates.length) items.update(updates);
+            if (removes.length) items.remove(removes);
+          }
+
+          clearRegWarningsForShift(item.id);
+          markRegisterDirty(item.id);
+
+        } finally {
+          // ★ 例外が起きても必ず後始末（追従式バグ予防）
+          __dragBase.delete(item.id);
+        }
       },
 
       onRemove: function (item, callback) {
@@ -1131,6 +1186,9 @@
     let currentShiftId = null;
     let registerAssignments = [];  // 一時保存
 
+    const registersDraftByShift = new Map(); // key: String(shiftId) -> assignments(Array)
+    const cloneRegs = (x) => JSON.parse(JSON.stringify(x || []));
+
     function minutesBetween(dateA, dateB) {
       const a = (dateA instanceof Date) ? dateA : new Date(dateA);
       const b = (dateB instanceof Date) ? dateB : new Date(dateB);
@@ -1141,6 +1199,7 @@
       const t = (d instanceof Date) ? d : new Date(d);
       return String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
     }
+
     // 共通：指定アイテムでレジ編集モーダルを開く（確定シフトのみ）
     function openRegisterForItem(itemId) {
       const idStr = String(itemId);
@@ -1156,21 +1215,62 @@
       $('#registerShiftInfo').text(`${staffName ? staffName + '｜' : ''}${startTime} 〜 ${endTime}`);
 
 
-      // ① まず UI の現在値を採用
-      const uiRegs = items.get({ filter: it => isReg(it) && it.shift_id === itemId });
-      if (uiRegs.length > 0) {
-        registerAssignments = uiRegs
-          .filter(r => minutesBetween(r.start, r.end) >= MIN_REG_MIN)
-          .map(r => ({
-            id: String(r.id).replace(/^reg-/, ''),             // 数字ID相当に整形（新規は空でもOK）
-            register_number: r.register_number,
-            register_start_time: hhmmFromDate(r.start),
-            register_end_time: hhmmFromDate(r.end),
-          }));
+      const draft = registersDraftByShift.get(String(itemId));
+      if (draft && draft.length >= 0) {
+        registerAssignments = cloneRegs(draft);
         renderRegisterList();
         $('#registerModal').modal('show');
         return;
       }
+
+      // ① まず UI の現在値を採用（ただし pending を反映してから表示）
+      const sid = String(itemId);
+
+      // UI regs を集める（shift_id は型が揺れるので String 比較）
+      let uiMerged = items.get({
+        filter: it => isReg(it) && String(it.shift_id) === sid
+      })
+        .filter(r => minutesBetween(r.start, r.end) >= MIN_REG_MIN)
+        .map(r => ({
+          id: String(r.id).replace(/^reg-/, ''),  // "157"
+          register_number: r.register_number,
+          register_start_time: hhmmFromDate(r.start),
+          register_end_time: hhmmFromDate(r.end),
+        }));
+
+      // pending（モーダル保存で積まれた変更）を UI採用時にも反映
+      const pending = (changes || []).filter(c =>
+        (c.action === 'update_reg' || c.action === 'remove_reg') &&
+        String(c?.item?.shift_id || '') === sid &&
+        c?.item?.id != null
+      );
+
+
+      for (const ch of pending) {
+        const rid = String(ch.item.id); // "157"
+        if (ch.action === 'remove_reg') {
+          uiMerged = uiMerged.filter(x => String(x.id) !== rid);
+        } else if (ch.action === 'update_reg') {
+          const updated = {
+            id: rid,
+            register_number: ch.item.register_number ?? null,
+            register_start_time: ch.item.register_start_time,
+            register_end_time: ch.item.register_end_time,
+          };
+          const i = uiMerged.findIndex(x => String(x.id) === rid);
+          if (i >= 0) uiMerged[i] = updated;
+          else uiMerged.push(updated);
+        }
+      }
+
+      // UIが空でも「削除した結果」かもしれないので、ここで一旦表示してOK
+      if (uiMerged.length > 0 || pending.length > 0) {
+        registerAssignments = uiMerged;
+        renderRegisterList();
+        $('#registerModal').modal('show');
+        return;
+      }
+
 
       // ② UIに無い場合だけサーバから取得（従来どおり）
       fetch(`/get-register-assignments/?shift_id=${itemId}`, { method: 'GET', credentials: 'same-origin' })
@@ -1268,10 +1368,113 @@
       renderRegisterList();
     });
 
+
+    // モーダル内ボタンは「イベント委譲」で確実に拾う
+    document.addEventListener('click', function (e) {
+      const btnShift = e.target.closest('#deleteShiftBtn');
+      if (btnShift) {
+        e.preventDefault();
+        console.log('[click] deleteShiftBtn', currentShiftId);
+        deleteShiftFromModal();
+        return;
+      }
+
+      const btnRegs = e.target.closest('#deleteAllRegsBtn');
+      if (btnRegs) {
+        e.preventDefault();
+        console.log('[click] deleteAllRegsBtn', currentShiftId);
+        deleteAllRegsFromModal();
+        return;
+      }
+    });
+
+    function getItemFlex(id) {
+      // そのまま
+      let it = items.get(id);
+      if (it) return it;
+
+      // 数字っぽいなら number でも試す
+      const n = Number(id);
+      if (!Number.isNaN(n)) {
+        it = items.get(n);
+        if (it) return it;
+      }
+
+      // 最後に string
+      it = items.get(String(id));
+      return it || null;
+    }
+
+    // シフト削除ボタン
+    function deleteShiftFromModal() {
+      const rawId = currentShiftId;                 // ★型そのまま保持
+      const sid = String(currentShiftId || '');     // ★比較用（shift_idやSet用）
+      if (!sid) return;
+
+      const shiftItem = getItemFlex(rawId);
+      console.log('[deleteShift] rawId=', rawId, 'sid=', sid, 'shiftItem=', shiftItem);
+      if (!shiftItem) return;
+
+      if (String(shiftItem.id).startsWith('wish-')) {
+        alert('希望(wish)は削除できません');
+        return;
+      }
+
+      if (!confirm('このシフトを削除しますか？')) return;
+
+      // changes に remove（新規なら add をキャンセル）
+      onTaskBarChanged('remove', shiftItem);
+
+      // 紐づくレジをUIから削除（shift_id は数値のこともあるので String 比較でOK）
+      const regs = items.get({ filter: it => it && it.is_reg === true && String(it.shift_id) === sid });
+      console.log('[deleteShift] regs=', regs.map(r => r.id));
+      if (regs.length) items.remove(regs.map(r => r.id));
+
+      // モーダル側
+      registerAssignments = [];
+      renderRegisterList();
+
+      // フラグ・掃除
+      markRegisterDirty(sid);
+      clearRegWarningsForShift(sid);
+      scheduleRefreshSummary();
+
+      // シフト削除（ここは shiftItem.id を使うので型一致）
+      items.remove(shiftItem.id);
+
+      // 見た目残り対策
+      timeline && timeline.setSelection && timeline.setSelection([]);
+
+      $('#registerModal').modal('hide');
+      currentShiftId = null;
+    }
+
+    // レジ割当全削除ボタン
+    function deleteAllRegsFromModal() {
+      const sid = String(currentShiftId || '');
+      if (!sid) return;
+
+      // モーダル表示（ドラフト）だけクリア
+      registerAssignments = [];
+      renderRegisterList();
+
+      // draft は「未保存状態」として保持（Mapがあるなら）
+      if (typeof registersDraftByShift !== 'undefined' && registersDraftByShift instanceof Map) {
+        registersDraftByShift.set(sid, []);   // ここはOK（未保存）
+      }
+
+      // dirty を立てるのも「未保存があります」を出したいならOK
+      // ただし「閉じたら破棄」するなら、閉じる時に戻す処理が必要（後述）
+      markRegisterDirty(sid);
+
+      updateUnsavedIndicator && updateUnsavedIndicator();
+    }
+
+
     function getShiftBoundary(shiftId) {
       // 1) 画面上の現在値
       const it = items.get(shiftId);
-      let start = new Date(it.start), end = new Date(it.end);
+      let start = new Date(it.  start), end = new Date(it.end);
 
       // 2) 未保存の移動/更新があれば上書き
       const pend = (changes || []).find(c =>
@@ -1556,8 +1759,13 @@
     function applyRegistersToTimeline(shiftId, assignments) {
       const shiftItem = items.get(shiftId);
       if (!shiftItem) return;
+
+      // ★先に draft を更新（UIが一瞬消える/再描画でも残る）
+      registersDraftByShift.set(String(shiftId), cloneRegs(assignments));
+
       const existing = items.get({ filter: it => isReg(it) && it.shift_id === shiftId });
       if (existing.length) items.remove(existing.map(it => it.id));
+
       const baseId = Date.now();
       const toAdd = [];
       (assignments || []).forEach((a, index) => {
@@ -1577,9 +1785,9 @@
           register_number: a.register_number
         });
       });
-      if (toAdd.length) {
-        items.add(toAdd);
-      }
+
+      if (toAdd.length) items.add(toAdd);
+
       clearRegWarningsForShift(shiftId);
       timeline.redraw();
       scheduleRefreshSummary();
@@ -2020,7 +2228,10 @@
       Array.from(targetShiftIds).forEach(rawId => {
         const numericId = Number(rawId);
         if (!Number.isFinite(numericId)) return;
-        const assignments = buildAssignmentsFromUI(numericId);
+        const key = String(numericId);
+        const assignments = registersDraftByShift.has(key)
+          ? cloneRegs(registersDraftByShift.get(key))
+          : buildAssignmentsFromUI(numericId);
         const overlap = detectRegisterOverlaps(assignments, selectedDate);
         if (overlap.length) {
           conflicts.push({
