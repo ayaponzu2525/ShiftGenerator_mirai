@@ -1415,6 +1415,69 @@ def bulk_reset_to_wish(request):
 
     return JsonResponse({"success": True, "count": total_reset})
 
+# shift_formのためのどこ見てるかフック
+@login_required
+def shift_events_api(request):
+    user = request.user
+    staff_profile = getattr(user, 'staff_profile', None)
+    if not staff_profile:
+        return JsonResponse({'error': 'no staff'}, status=403)
+
+    start = parse_date(request.GET.get('start'))
+    end = parse_date(request.GET.get('end'))
+    if not start or not end:
+        return JsonResponse({'error': 'start/end required'}, status=400)
+
+    qs = ShiftPreference.objects.filter(
+        staff=staff_profile,
+        date__gte=start,
+        date__lt=end,  # endはexclusiveにすると扱いやすい
+    )
+
+    events = []
+    for shift in qs:
+        if shift.holiday:
+            # holiday.id で色決め（今のままでOK）
+            # typeも付ける（off/pendingなど）
+            # 例: holiday.id==1 休み、id==3 未定 みたいにマッピング
+            if shift.holiday.id == 1:
+                t = "off"
+                color = "#ff3d3d"
+            elif shift.holiday.id == 3:
+                t = "pending"
+                color = "#ede100"
+            else:
+                t = "off"
+                color = "#12a8b3"
+
+            events.append({
+                "id": shift.id,
+                "title": shift.holiday.holiday_name,
+                "start": shift.date.isoformat() + "T00:00:00",
+                "end": shift.date.isoformat() + "T23:59:59",
+                "display": "block",
+                "extendedProps": {
+                    "type": t,
+                    "holiday": True,
+                    "markerColor": color,
+                }
+            })
+        elif shift.starttime and shift.endtime:
+            events.append({
+                "id": shift.id,
+                "title": f'{shift.starttime.strftime("%H:%M")} - {shift.endtime.strftime("%H:%M")}',
+                "start": f'{shift.date}T{shift.starttime.strftime("%H:%M:%S")}',
+                "end": f'{shift.date}T{shift.endtime.strftime("%H:%M:%S")}',
+                "extendedProps": {
+                    "type": "shift",
+                    "holiday": False,
+                    "starttime": shift.starttime.strftime("%H:%M"),
+                    "endtime": shift.endtime.strftime("%H:%M"),
+                }
+            })
+
+    return JsonResponse(events, safe=False)
+
 @login_required
 def shift_form(request):
     user = request.user

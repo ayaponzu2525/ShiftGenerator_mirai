@@ -157,6 +157,7 @@
             <button type="submit" class="btn btn-primary">表示</button>
         </form>
       </div>
+      <div id="registerToast" style="position:fixed; right:12px; bottom:12px; z-index:9999; max-width:360px;"></div>
       <a href="{% url 'shiftgenerator:admin-home' %}" class="btn btn-outline-primary">
         <i class="fas fa-home mr-2"></i> 管理者ホームに戻る
       </a>
@@ -1451,25 +1452,16 @@
 
     // レジ割当全削除ボタン
     function deleteAllRegsFromModal() {
-      const sid = String(currentShiftId || '');
-      if (!sid) return;
+      const shiftId = Number(currentShiftId);
+      if (!Number.isFinite(shiftId)) return;
 
-      // モーダル表示（ドラフト）だけクリア
+      // 編集中の表示だけクリア（閉じたら元に戻る）
       registerAssignments = [];
       renderRegisterList();
 
-      // draft は「未保存状態」として保持（Mapがあるなら）
-      if (typeof registersDraftByShift !== 'undefined' && registersDraftByShift instanceof Map) {
-        registersDraftByShift.set(sid, []);   // ここはOK（未保存）
-      }
-
-      // dirty を立てるのも「未保存があります」を出したいならOK
-      // ただし「閉じたら破棄」するなら、閉じる時に戻す処理が必要（後述）
-      markRegisterDirty(sid);
-
-      updateUnsavedIndicator && updateUnsavedIndicator();
+      // ★ここでは draft を更新しない
+      // ★ここでは markRegisterDirty もしない
     }
-
 
     function getShiftBoundary(shiftId) {
       // 1) 画面上の現在値
@@ -1518,6 +1510,18 @@
 
       const crs = rs < shiftStart ? shiftStart : rs;
       const cre = re > shiftEnd ? shiftEnd : re;
+
+      // クランプが発生したら通知
+      if (warnings) {
+        const beforeS = toHHMM(rs);
+        const beforeE = toHHMM(re);
+        const afterS  = toHHMM(crs);
+        const afterE  = toHHMM(cre);
+
+        if (beforeS !== afterS || beforeE !== afterE) {
+          warnings.add(`レジ${a.register_number} を ${beforeS}〜${beforeE} → ${afterS}〜${afterE} に自動調整しました`);
+        }
+      }
 
       if (crs >= cre) {
         warnings.add(`レジ${a.register_number} の時間幅がゼロ/逆転です`);
@@ -1832,16 +1836,54 @@
       return conflicts;
     }
 
-    // 保存ボタン
 
+    function showRegisterAdjustNotice(messages) {
+      const host = document.getElementById('registerToast');
+      if (!host) return;
+
+      const msgs = Array.from(messages || []);
+      if (msgs.length === 0) return;
+
+      const head = `レジ時間をシフト内に収まるよう自動調整しました（${msgs.length}件）`;
+      const list = msgs.slice(0, 5).map(m => `<li>${escapeHtml(m)}</li>`).join('');
+      const more = msgs.length > 5 ? `<div class="small text-muted">ほか ${msgs.length - 5} 件</div>` : '';
+
+      const el = document.createElement('div');
+      el.className = 'alert alert-warning shadow';
+      el.innerHTML = `
+        <div class="d-flex justify-content-between">
+          <div style="padding-right:8px;">
+            <div class="font-weight-bold">${head}</div>
+            <ul class="mb-0 mt-1">${list}</ul>
+            ${more}
+          </div>
+          <button type="button" class="close" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+        </div>
+      `;
+      el.querySelector('.close').onclick = () => el.remove();
+
+      host.appendChild(el);
+      setTimeout(() => { el.remove(); }, 5000);
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[c]));
+    }
+
+    // 保存ボタン
     $('#saveRegisterBtn').click(() => {
+      const shiftId = Number(currentShiftId);
+      if (!Number.isFinite(shiftId)) return;
+
       $('#registerList .input-group').each(function (i) {
         registerAssignments[i].register_number = parseInt($(this).find('.regNum').val(), 10);
         registerAssignments[i].register_start_time = $(this).find('.regStartTime').val();
         registerAssignments[i].register_end_time = $(this).find('.regEndTime').val();
       });
 
-      const { start: shiftStart, end: shiftEnd } = getShiftBoundary(currentShiftId);
+      const { start: shiftStart, end: shiftEnd } = getShiftBoundary(shiftId);
       const warnings = new Set();
       const adjusted = [];
 
@@ -1862,8 +1904,8 @@
         return;
       }
 
-      // ★ 追加：他スタッフの同番号レジとの重複チェック（クロススタッフ）
-      const crossConflicts = detectCrossStaffRegisterConflicts(valids, selectedDate, currentShiftId);
+      // ★ クロススタッフ重複チェックも shiftId を渡す
+      const crossConflicts = detectCrossStaffRegisterConflicts(valids, selectedDate, shiftId);
       if (crossConflicts.length) {
         const shiftInfo = ($('#registerShiftInfo').text() || '').trim();
         const lines = crossConflicts.map(c =>
@@ -1876,17 +1918,25 @@
 
       if (valids.length === 0) {
         registerAssignments = [];
-        applyRegistersToTimeline(currentShiftId, registerAssignments);
-        markRegisterDirty(currentShiftId);
+        applyRegistersToTimeline(shiftId, registerAssignments);
+        markRegisterDirty(shiftId);
         $('#registerModal').modal('hide');
         return;
       }
 
-      const warnCount = warnings.size + invalids.length;
-      if (warnCount > 0) {
-        const ok = confirm(`注意：自動調整/スキップ等の検知が ${warnCount} 件あります。保存を続行しますか？`);
-        if (!ok) return;
+      // 自動調整があったら、止めずに通知だけ出す
+      const adjustMsgs = Array.from(warnings); // ←退避しておく
+
+      applyRegistersToTimeline(shiftId, registerAssignments);
+      markRegisterDirty(shiftId);
+      $('#registerModal').modal('hide');
+
+      // ★ モーダル閉じたあとにトースト出す
+      if (adjustMsgs.length > 0) {
+        setTimeout(() => showRegisterAdjustNotice(adjustMsgs), 0);
       }
+
+
 
       registerAssignments = valids
         .map(({ __invalid, ...rest }) => rest)
@@ -1896,10 +1946,11 @@
           return minutesBetween(rs, re) >= MIN_REG_MIN;
         });
 
-      applyRegistersToTimeline(currentShiftId, registerAssignments);
-      markRegisterDirty(currentShiftId);
+      applyRegistersToTimeline(shiftId, registerAssignments);
+      markRegisterDirty(shiftId);
       $('#registerModal').modal('hide');
     });
+
 
 
     // 固定時間軸のセットアップ
