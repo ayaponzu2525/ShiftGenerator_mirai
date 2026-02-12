@@ -1522,7 +1522,8 @@ def shift_form(request):
                 'holiday': True,
                 'holidayColor': holiday_color,# 休みの色を追加
                 'starttime': None,
-                'endtime': None
+                'endtime': None,
+                'type': 'pending'
                 }
             })
         elif shift.starttime and shift.endtime:

@@ -44,6 +44,147 @@
             padding: 5px 10px;
         }
 
+        /* ===== 日付セルのマーカー（スマホ用） ===== */
+        .day-markers { display:flex; gap:4px; margin-left:6px; align-items:center; }
+        .mk { display:inline-block; }
+        .mk.circle { width:8px; height:8px; border-radius:999px; background:#2b78ff; } /* 青○ */
+        .mk.square { width:8px; height:8px; background:#ff3b30; } /* 赤□ */
+        .mk.triangle {
+        width:0; height:0;
+        border-left:5px solid transparent;
+        border-right:5px solid transparent;
+        border-bottom:9px solid #ffcc00; /* 黄△ */
+        }
+
+        /* ===== ボトムシート ===== */
+        .sheet-backdrop{
+        position:fixed; inset:0;
+        background:rgba(0,0,0,.35);
+        opacity:0; pointer-events:none;
+        transition:opacity .2s ease;
+        z-index:1040;
+        }
+        .sheet-backdrop.open{ opacity:1; pointer-events:auto; }
+
+        .sheet{
+        position: fixed;
+        left:0; right:0; bottom:0;
+        height:70vh;
+        background:#fff;
+        border-top-left-radius:16px;
+        border-top-right-radius:16px;
+        transform:translateY(100%);
+        transition:transform .25s ease;
+        z-index:1050;
+
+        display:flex;
+        flex-direction:column;
+        }
+        .sheet.open{ transform:translateY(0); }
+
+        .sheet-handle{
+        width:44px; height:5px;
+        background:#ddd;
+        border-radius:999px;
+        margin:10px auto 6px;
+        }
+        .sheet-fixed{ padding:10px 14px; flex:0 0 auto; }
+        /* 中身はここだけスクロール */
+        .sheet-scroll{
+        padding: 0 14px;
+        overflow: auto;                 /* ★ここが重要 */
+        flex: 1 1 auto;
+        min-height: 0;                  /* iOS対策 */
+
+        /* フッター分の“最小”だけ確保（これが無いと下がボタンに隠れる） */
+        padding-bottom: calc(8px + 56px + env(safe-area-inset-bottom));
+        }
+
+
+        /* フッター固定（下） */
+        .sheet-footer{
+        flex: 0 0 auto;
+        padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+        background: #fff;
+        border-top: 1px solid #eee;
+
+        /* 影で「固定感」 */
+        box-shadow: 0 -6px 18px rgba(0,0,0,.08);
+        }
+
+        .sheet-footer .btn{
+        min-height: 48px;
+        font-weight: 600;
+        border-radius: 12px;
+        }
+
+        .sheet-header{ display:flex; align-items:center; justify-content:space-between; }
+        .sheet-date{ font-size:18px; font-weight:700; }
+        .sheet-close{ background:transparent; border:none; font-size:22px; line-height:1; }
+
+        .section-title{ font-size:13px; color:#666; margin:10px 0 6px; }
+
+        .items{ display:flex; flex-wrap:wrap; gap:8px; }
+        :root{
+        --sheet-btn-font: clamp(13px, 3.6vw, 16px);
+        --sheet-btn-padY: clamp(10px, 2.8vw, 14px);
+        --sheet-btn-padX: clamp(12px, 3.2vw, 16px);
+        }
+
+        .sheet-history{
+        display: block;                 /* flexやめる */
+        min-height: auto;
+        }
+
+        .sheet-item, .history-item{
+        border: 1px solid #ddd;
+        background: #fff;
+        border-radius: 12px;
+        min-height: 44px;
+
+        font-size: var(--sheet-btn-font);
+        padding: var(--sheet-btn-padY) var(--sheet-btn-padX);
+
+        line-height: 1.2;
+        text-align: center;
+        }
+
+        /* ✅ 休みボタン / 今日の予定ボタン（flexの中）だけ 100% にするなら */
+        .items .sheet-item{
+        width: 100%;
+        }
+
+
+        .muted{ color:#888; font-size:13px; }
+
+        /* 履歴タイトルは固定で、履歴だけ伸びてスクロール */
+        #historyItems{
+        display: grid;
+        gap: 10px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+
+        flex: 1 1 auto;     /* ✅残り高さを全部使う */
+        min-height: 0;
+        overflow: visible;     /* ✅ここだけスクロール */
+        -webkit-overflow-scrolling: touch;
+
+        /* max-height: 40vh; ← これは消してOK */
+        }
+
+        @media (min-width: 420px){
+        #historyItems{
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+        }
+
+        /* ✅ 履歴（grid）の中では width を持たせない（セル幅にフィット） */
+        #historyItems .history-item{
+        width: auto;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        }
+
     </style>
 </head>
 <body>
@@ -52,28 +193,63 @@
         <p>こんにちは, {{ user.username }}さん</p> <!-- ユーザー名の表示 -->
         <p>こんにちは、staff : {{ name }}さん (カスタムユーザー: {{ username }})</p>
         
-    <form id="shiftSubmitForm" method="POST" action="{% url 'shiftgenerator:submit-shift' %}">
-    {% csrf_token %}
-    <div class="form-group">
-        <label for="periodSelect"><b>受付中の募集期間を選択</b></label>
-        <select class="form-control" id="periodSelect" name="period_id" required>
-        <option value="">-- 選択してください --</option>
-        {% for period in active_periods %}
-            <option value="{{ period.id }}">
-            {{ period.label }}（{{ period.start_date }}〜{{ period.end_date }}）
-            </option>
-        {% endfor %}
-        </select>
-    </div>
-    <div class="form-group">
-        <label for="periodComment">この期間に関するコメント（空欄でもOK）</label>
-        <textarea class="form-control" id="periodComment" name="period_comment" rows="2" placeholder="伝えたいことがあれば記入"></textarea>
-    </div>
+    <div class="accordion" id="submitAccordion">
+        <div class="card">
+            <!-- ヘッダー全体がクリック領域 -->
+            <div class="card-header p-0" id="headingSubmit">
+            <button
+                class="btn btn-light btn-block text-left p-3"
+                type="button"
+                data-toggle="collapse"
+                data-target="#collapseSubmit"
+                aria-expanded="false"
+                aria-controls="collapseSubmit"
+                style="border:0;border-radius:0;"
+            >
+                提出（募集期間・コメント）
+            </button>
+            </div>
 
-    <!-- ここに希望シフト入力欄（既存のもの） -->
+            <!-- ★デフォルト閉：show を付けない -->
+            <div
+            id="collapseSubmit"
+            class="collapse"
+            aria-labelledby="headingSubmit"
+            data-parent="#submitAccordion"
+            >
+            <div class="card-body">
 
-    <button type="submit" class="btn btn-primary mt-3">この内容で提出</button>
-    </form>
+                <!-- ↓ ここにあなたの shiftSubmitForm をそのまま置く ↓ -->
+                <form id="shiftSubmitForm" method="POST" action="{% url 'shiftgenerator:submit-shift' %}">
+                {% csrf_token %}
+                <div class="form-group">
+                    <label for="periodSelect"><b>受付中の募集期間を選択</b></label>
+                    <select class="form-control" id="periodSelect" name="period_id" required>
+                    <option value="">-- 選択してください --</option>
+                    {% for period in active_periods %}
+                        <option value="{{ period.id }}">
+                        {{ period.label }}（{{ period.start_date }}〜{{ period.end_date }}）
+                        </option>
+                    {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="periodComment">この期間に関するコメント（空欄でもOK）</label>
+                    <textarea class="form-control" id="periodComment" name="period_comment" rows="2"
+                            placeholder="伝えたいことがあれば記入"></textarea>
+                </div>
+
+                <button type="submit" class="btn btn-primary mt-3">この内容で提出</button>
+                </form>
+
+            </div>
+            </div>
+        </div>
+
+        </div>
+
+
 
     <!-- 提出完了モーダル -->
     <div class="modal fade" id="submitDoneModal" tabindex="-1" aria-hidden="true">
@@ -173,7 +349,48 @@
         </div>
     </div>
 
-  
+    <!-- スマホ用ボトムシート -->
+    <div id="bottomSheet" class="sheet" aria-hidden="true">
+    <div class="sheet-handle"></div>
+
+    <!-- ①ヘッダー：固定 -->
+    <div class="sheet-fixed">
+        <div class="sheet-header">
+        <div id="sheetDateLabel" class="sheet-date">YYYY-MM-DD</div>
+        <button id="sheetCloseBtn" type="button" class="sheet-close" aria-label="閉じる">×</button>
+        </div>
+    </div>
+
+    <!-- ②中身：スクロール -->
+    <div class="sheet-scroll">
+        <div class="sheet-section">
+        <div class="section-title">この日の予定</div>
+        <div id="dayItems" class="items"></div>
+        </div>
+
+        <div class="sheet-section">
+        <div class="section-title">休み・予定</div>
+        <div id="sheetHolidayButtons" class="items"></div>
+        <div class="muted" style="margin-top:6px;">※ 休み/学校休み/未定 など</div>
+        </div>
+
+        <div class="sheet-section sheet-history">
+            <div class="section-title">履歴（最近10件）</div>
+            <div id="historyItems"></div>
+        </div>
+
+        </div>
+    
+
+    <!-- ③フッター：固定（常に下） -->
+    <div class="sheet-footer">
+        <button id="addNewBtn" type="button" class="btn btn-primary btn-block">＋ 新しく追加</button>
+    </div>
+    </div>
+    
+
+    </div>
+
 
     <!-- FullCalendarのJSと依存関係 -->
     <script src="https://cdn.jsdelivr.net/npm/fullcalendar@5.10.1/main.min.js"></script>
@@ -182,94 +399,330 @@
 
     <script>
 document.addEventListener('DOMContentLoaded', function() {
-    var calendarEl = document.getElementById('calendar');
-    var events = JSON.parse('{{ events|safe }}');  // Djangoから渡されたイベントデータをJSON形式で取得
+//日付作成用関数
+function toYMD(dateObj){
+  const y = dateObj.getFullYear();
+  const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const d = String(dateObj.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
 
-    var calendar = new FullCalendar.Calendar(calendarEl, {
-        initialView: 'dayGridMonth',
-        locale: 'ja',
-        timeZone: 'Asia/Tokyo',
-        displayEventTime: true,
-        eventTimeFormat: {
-            hour: 'numeric',
-            minute: '2-digit',
-            meridiem: false
-        },
-        eventSourceFailure: function(errorObj) {
-            console.error('イベントの取得に失敗しました:', errorObj);
-        },
-        events: events,
-        eventContent: function(arg) {
-            var title = document.createElement('div');
+  const calendarEl = document.getElementById('calendar');
 
-            // 休みイベントの場合
-            if (arg.event.extendedProps.holiday) { // holidayが存在する場合
-                title.innerHTML = `<div style="display: flex; justify-content: center; align-items: center; background-color: ${arg.event.extendedProps.holidayColor}; color: white; padding: 5px; border-radius: 4px; width: 100%;">
-                    ${arg.event.title}</div>`; // 中央に配置
-            } else {
-                // 通常のシフトイベント
-                var startTime = formatTime(arg.event.extendedProps.starttime); 
-                var endTime = formatTime(arg.event.extendedProps.endtime); 
-                var timeRange = startTime + ' - ' + endTime;
+  const isMobile = window.matchMedia("(max-width: 767.98px)").matches;
 
-                title.innerHTML = `<div style="display: flex; align-items: center;">
-                    <span class="fc-event-dot" style="background-color: ${arg.event.backgroundColor};"></span>
-                    ${timeRange}
-                </div>`;
-            }
+  // PC用（従来）: テンプレ埋め込み events を残す
+  // Mobile用（新）: APIから範囲取得して cachedEvents を使う
+  let eventsEmbedded = [];
+  try {
+    eventsEmbedded = JSON.parse('{{ events|safe }}');
+  } catch (e) {
+    console.error("events parse error", e);
+  }
 
-            return { domNodes: [title] };
-        },
-        eventClick: function(info) {
-            console.log(info.event); // ここで情報を確認
-            var shiftId = info.event.id;  // 直接シフトIDを取得
-            if (shiftId) {
-                var url = "/shift-detail/" + shiftId + "/";  // シフトIDを使ってURLを作成
-                window.location.href = url;
-            } else {
-                console.error('シフトIDが取得できませんでした');
-            }
-        },
-        dayCellDidMount: function(info) {
-            var date = new Date(info.date);
-            date.setHours(0, 0, 0, 0);
-            var dateStr = date.toISOString().split('T')[0];
-            var dateCorrected = new Date(date);
-            dateCorrected.setDate(date.getDate() + 1);
-            var dateStrCorrected = dateCorrected.toISOString().split('T')[0];
+  let cachedEvents = eventsEmbedded; // 最初は埋め込みを使ってもOK
+  let dayTypeMap = new Map();
+  let historyCache = null;
+  let historyFetching = false;
 
-            var button = document.createElement('button');
-            button.innerText = '登録';
-            button.className = 'btn btn-primary btn-sm';
-            button.onclick = function() {
-                window.selectedDate = dateStrCorrected; // ここで日付を設定
-                $('#shiftModal').modal('show');
-                document.getElementById('dateDisplay').textContent = dateStrCorrected;
-
-                fetch('/get-shift-history/')
-                    .then(response => response.json())
-                    .then(data => {
-                        const historyContainer = document.getElementById('historyContainer');
-                        historyContainer.innerHTML = '';
-
-                        data.forEach(history => {
-                            const historyButton = document.createElement('button');
-                            historyButton.className = 'btn btn-primary btn-sm';
-                            historyButton.style.marginRight = '10px'; // 隙間を開ける
-                            historyButton.style.marginBottom = '10px'; // 隙間を開ける
-                            historyButton.textContent = `${formatTime(history.starttime)} - ${formatTime(history.endtime)}`;
-                            historyButton.onclick = function() {
-                                registerShift(history.starttime, history.endtime, dateStrCorrected);
-                            };
-                            historyContainer.appendChild(historyButton);
-                        });
-                    })
-                    .catch(error => console.error('履歴取得エラー:', error));
-            };
-
-            info.el.appendChild(button);
+  function buildDayTypeMap(events) {
+    dayTypeMap.clear();
+    for (const ev of events) {
+      const d = (ev.start || "").slice(0,10);
+      // 旧データには type が無い可能性があるので推定
+      let t = ev.extendedProps?.type;
+      if (!t) {
+        if (ev.extendedProps?.holiday) {
+          // holiday idで未定/休みを判定したいならここで分岐
+          t = "off"; // 暫定（未定はpendingにしたいならAPI側で付けるのが確実）
+        } else {
+          t = "shift";
         }
+      }
+      if (!d || !t) continue;
+      if (!dayTypeMap.has(d)) dayTypeMap.set(d, new Set());
+      dayTypeMap.get(d).add(t);
+    }
+  }
+
+  function makeMarker(kind){
+    const el = document.createElement("span");
+    el.className = `mk ${kind}`;
+    return el;
+  }
+
+  function renderMarkersForDayCell(info) {
+    const d = toYMD(info.date);
+    const types = dayTypeMap.get(d);
+    if (!types) return;
+
+    const old = info.el.querySelector(".day-markers");
+    if (old) old.remove();
+
+    const wrap = document.createElement("div");
+    wrap.className = "day-markers";
+    if (types.has("shift")) wrap.appendChild(makeMarker("circle"));
+    if (types.has("off")) wrap.appendChild(makeMarker("square"));
+    if (types.has("pending")) wrap.appendChild(makeMarker("triangle"));
+    info.el.querySelector(".fc-daygrid-day-top")?.appendChild(wrap);
+  }
+
+  async function ensureHistoryLoaded() {
+    if (historyCache || historyFetching) return;
+    historyFetching = true;
+    try {
+      const res = await fetch('/get-shift-history/');
+      historyCache = await res.json();
+    } catch (e) {
+      console.error('履歴取得エラー:', e);
+      historyCache = [];
+    } finally {
+      historyFetching = false;
+    }
+  }
+
+  function openBottomSheet(dateStr, dayItems) {
+    window.selectedDate = dateStr;
+    document.getElementById('sheetDateLabel').textContent = dateStr;
+
+    const dayItemsEl = document.getElementById('dayItems');
+    async function renderSheetHolidayButtons(dateStr) {
+        const wrap = document.getElementById('sheetHolidayButtons');
+        if (!wrap) return;
+
+        wrap.innerHTML = `<div class="muted">読み込み中...</div>`;
+        try {
+            const res = await fetch('/get-holidays/');
+            const holidays = await res.json();
+
+            wrap.innerHTML = '';
+            holidays.forEach(h => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'sheet-item';
+            b.textContent = h.holiday_name;
+            b.onclick = () => {
+                // ✅スマホ：ボトムシートから即登録→即反映
+                registerHoliday(h.id, dateStr);
+            };
+            wrap.appendChild(b);
+            });
+
+            if (!holidays.length) wrap.innerHTML = `<div class="muted">休み種別がありません</div>`;
+        } catch (e) {
+            console.error('休み取得エラー:', e);
+            wrap.innerHTML = `<div class="muted">休み種別の取得に失敗</div>`;
+        }
+        }
+    
+    renderSheetHolidayButtons(dateStr);
+
+    dayItemsEl.innerHTML = '';
+    if (!dayItems.length) {
+      dayItemsEl.innerHTML = `<div class="muted">この日の入力はまだありません</div>`;
+    } else {
+      dayItems.forEach(ev => {
+        const btn = document.createElement('button');
+        btn.className = 'sheet-item';
+
+        let label = ev.title || '';
+        const t = ev.extendedProps?.type;
+        if (t === 'shift') {
+          const st = ev.extendedProps?.starttime;
+          const et = ev.extendedProps?.endtime;
+          if (st && et) label = `${st} - ${et}`;
+        }
+
+        btn.textContent = label;
+        btn.onclick = () => {
+          if (ev.id) window.location.href = `/shift-detail/${ev.id}/`;
+        };
+        dayItemsEl.appendChild(btn);
+      });
+    }
+
+    const histEl = document.getElementById('historyItems');
+    histEl.innerHTML = `<div class="muted">読み込み中...</div>`;
+    ensureHistoryLoaded().then(() => {
+      histEl.innerHTML = '';
+      (historyCache || []).forEach(h => {
+        const b = document.createElement('button');
+        b.className = 'history-item';
+        b.textContent = `${formatTime(h.starttime)} - ${formatTime(h.endtime)}`;
+        b.onclick = () => registerShift(h.starttime, h.endtime, dateStr);
+        histEl.appendChild(b);
+      });
+      if (!historyCache?.length) histEl.innerHTML = `<div class="muted">履歴がありません</div>`;
     });
+
+    document.getElementById('bottomSheet').classList.add('open');
+    document.getElementById('sheetBackdrop')?.classList.add('open');
+  }
+
+  function closeBottomSheet() {
+    document.getElementById('bottomSheet').classList.remove('open');
+    document.getElementById('sheetBackdrop')?.classList.remove('open');
+  }
+
+  document.getElementById('sheetCloseBtn')?.addEventListener('click', closeBottomSheet);
+  document.getElementById('sheetBackdrop')?.addEventListener('click', closeBottomSheet);
+
+  window.closeBottomSheet = closeBottomSheet;
+  document.getElementById('addNewBtn')?.addEventListener('click', () => {
+    // ✅スマホ：モーダルは使わず、即 新規登録画面へ
+    const d = window.selectedDate;
+    if (!d) return;
+
+    const registerUrl = document.getElementById('calendar').getAttribute('data-url');
+    const newRegisterUrl = `${registerUrl}?date=${encodeURIComponent(d)}`;
+    window.location.href = newRegisterUrl;
+    });
+
+
+  window.calendar = new FullCalendar.Calendar(calendarEl, {
+    initialView: 'dayGridMonth',
+    locale: 'ja',
+    timeZone: 'Asia/Tokyo',
+
+    // ✅ スマホだけ：表示範囲に応じてAPI取得
+    datesSet: async (info) => {
+      if (!isMobile) return; // PCは従来埋め込みのまま
+      try {
+        const start = info.startStr.slice(0,10);
+        const end = info.endStr.slice(0,10);
+        const res = await fetch(`/api/shift-events/?start=${start}&end=${end}`);
+        cachedEvents = await res.json();
+
+        buildDayTypeMap(cachedEvents);
+        window.calendar.removeAllEvents();
+        window.calendar.addEventSource(cachedEvents);
+      } catch (e) {
+        console.error('イベントの取得に失敗しました:', e);
+      }
+      if (isMobile) {
+        document.querySelectorAll('.fc-daygrid-day').forEach(dayEl => {
+            // FullCalendarが日付を data-date に持ってる
+            const d = dayEl.getAttribute('data-date');
+            if (!d) return;
+            const types = dayTypeMap.get(d);
+            if (!types) return;
+
+            const old = dayEl.querySelector(".day-markers");
+            if (old) old.remove();
+
+            const wrap = document.createElement("div");
+            wrap.className = "day-markers";
+            if (types.has("shift")) wrap.appendChild(makeMarker("circle"));
+            if (types.has("off")) wrap.appendChild(makeMarker("square"));
+            if (types.has("pending")) wrap.appendChild(makeMarker("triangle"));
+
+            dayEl.querySelector(".fc-daygrid-day-top")?.appendChild(wrap);
+        });
+        }
+
+    },
+
+    // 初期イベント（PC向け）
+    events: isMobile ? [] : eventsEmbedded,
+
+    eventContent: function(arg) {
+      // ✅ スマホ：月セル内はスッキリ（何も出さない or 最小）
+      if (isMobile) return { domNodes: [] };
+
+      // ✅ PC：従来の表示
+      const title = document.createElement('div');
+      if (arg.event.extendedProps.holiday) {
+        title.innerHTML = `<div style="display:flex;justify-content:center;align-items:center;background-color:${arg.event.extendedProps.holidayColor};color:white;padding:5px;border-radius:4px;width:100%;">${arg.event.title}</div>`;
+      } else {
+        const startTime = formatTime(arg.event.extendedProps.starttime);
+        const endTime = formatTime(arg.event.extendedProps.endtime);
+        title.innerHTML = `<div style="display:flex;align-items:center;">
+          <span class="fc-event-dot" style="background-color:${arg.event.backgroundColor};"></span>
+          ${startTime} - ${endTime}
+        </div>`;
+      }
+      return { domNodes: [title] };
+    },
+
+    eventClick: function(info) {
+    const isMobileNow = window.matchMedia("(max-width: 767.98px)").matches;
+
+    if (isMobileNow) {
+        // スマホ：詳細へは飛ばさない（誤タップ防止）
+        info.jsEvent?.preventDefault();
+        info.jsEvent?.stopPropagation();
+        return;
+    }
+
+    // PC：従来通り詳細へ
+    const shiftId = info.event.id;
+    if (shiftId) window.location.href = "/shift-detail/" + shiftId + "/";
+    },
+
+
+
+    dayCellDidMount: function(info) {
+    if (isMobile) {
+        // スマホはここはマーカーだけ（datesSetで描画してるなら無くてもOK）
+        renderMarkersForDayCell(info);
+        return;
+    }
+
+    const dateStr = toYMD(info.date); // ✅ここが重要（info.dateStr は無い）
+
+    const button = document.createElement('button');
+    button.innerText = '登録';
+    button.className = 'btn btn-primary btn-sm';
+
+    button.onclick = function(e) {
+        e.stopPropagation();
+
+        window.selectedDate = dateStr;
+        document.getElementById('dateDisplay').textContent = dateStr;
+        $('#shiftModal').modal('show');
+
+        fetch('/get-shift-history/')
+        .then(r => r.json())
+        .then(data => {
+            const historyContainer = document.getElementById('historyContainer');
+            historyContainer.innerHTML = '';
+            data.forEach(history => {
+            const historyButton = document.createElement('button');
+            historyButton.className = 'btn btn-primary btn-sm';
+            historyButton.style.marginRight = '10px';
+            historyButton.style.marginBottom = '10px';
+            historyButton.textContent = `${formatTime(history.starttime)} - ${formatTime(history.endtime)}`;
+            historyButton.onclick = () => registerShift(history.starttime, history.endtime, dateStr);
+            historyContainer.appendChild(historyButton);
+            });
+        })
+        .catch(err => console.error('履歴取得エラー:', err));
+    };
+
+    info.el.appendChild(button);
+    },
+
+    // ✅ スマホ：日付タップでボトムシート
+    dateClick: function(info) {
+      if (!isMobile) return;
+      const d = toYMD(info.date);
+      const items = (window.__cachedEvents || cachedEvents).filter(ev => (ev.start || "").slice(0,10) === d);
+      openBottomSheet(d, items);
+    },
+  });
+
+  $('#shiftModal').on('shown.bs.modal', function () {
+        const d = document.getElementById('dateDisplay')?.textContent?.trim();
+        if (d) window.selectedDate = d;
+    });
+
+  // 初期用：PCは埋め込み、スマホは（初回datesSetが走って取る）に任せる
+  if (!isMobile) {
+    buildDayTypeMap(eventsEmbedded);
+  }
+
+  window.calendar.render();
+});
 
     
 
@@ -290,6 +743,7 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(data => {
             if (data.success) {
                 $('#shiftModal').modal('hide'); // モーダルを閉じる
+                window.closeBottomSheet();// ✅スマホ用
                 lastUpdate = data.last_update;  // バックエンドからの更新時刻を設定
                 updateCalendar(); // カレンダーを更新する
             } else {
@@ -329,6 +783,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 console.log('休みが登録されました');
                 // 必要ならば、ここで画面の更新やモーダルの閉じる処理などを追加
                 $('#shiftModal').modal('hide'); // モーダルを閉じる
+                window.closeBottomSheet(); // ✅スマホ用
                 lastUpdate = data.last_update; // バックエンドからの更新時刻を設定
                 updateCalendar();
             } else {
@@ -341,34 +796,49 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // 休みの登録ボタンを押したときの処理を追加
-    fetch('/get-holidays/') // 休みの種類を取得
-        .then(response => response.json())
+    fetch('/get-holidays/')
+        .then(r => r.json())
         .then(holidays => {
-            const holidayButtons = document.getElementById('holidayButtons');
-            holidayButtons.innerHTML = ''; // 既存のボタンをクリア
+            const holidayButtons = document.getElementById('holidayButtons');        // モーダル用
+            const sheetButtons   = document.getElementById('sheetHolidayButtons');  // ボトムシート用
+
+            if (holidayButtons) holidayButtons.innerHTML = '';
+            if (sheetButtons)   sheetButtons.innerHTML = '';
 
             holidays.forEach(holiday => {
-                const holidayButton = document.createElement('button');
-                holidayButton.className = 'btn btn-outline-primary holiday-button';
-                holidayButton.setAttribute('data-holiday-id', holiday.id);
-                holidayButton.innerText = holiday.holiday_name;
-
-                // ボタンの間隔を開けるためのスタイルを追加
-                holidayButton.style.marginRight = '10px'; // 右側に間隔を追加
-
-                // クリックイベントを追加
-                holidayButton.onclick = () => {
-                    const holidayId = holidayButton.getAttribute('data-holiday-id');
-                    const date = document.getElementById('dateDisplay').innerText;  // 表示されている日付を取得
-
-                    // 関数を呼び出す
-                    registerHoliday(holidayId, date);
+            // ---- モーダル用（PC想定）----
+            if (holidayButtons) {
+                const b = document.createElement('button');
+                b.className = 'btn btn-outline-primary holiday-button';
+                b.setAttribute('data-holiday-id', holiday.id);
+                b.innerText = holiday.holiday_name;
+                b.style.marginRight = '10px';
+                b.onclick = () => {
+                const date = document.getElementById('dateDisplay').innerText;
+                registerHoliday(holiday.id, date);
                 };
+                holidayButtons.appendChild(b);
+            }
 
-                holidayButtons.appendChild(holidayButton);
+            // ---- ボトムシート用（スマホ）----
+            if (sheetButtons) {
+                const b2 = document.createElement('button');
+                b2.type = 'button';
+                b2.className = 'sheet-item';
+                b2.innerText = holiday.holiday_name;
+                b2.onclick = () => {
+                // スマホは window.selectedDate を使う
+                registerHoliday(holiday.id, window.selectedDate);
+                };
+                sheetButtons.appendChild(b2);
+            }
             });
+
+            if (sheetButtons && !holidays.length) {
+            sheetButtons.innerHTML = `<div class="muted">休み種別がありません</div>`;
+            }
         })
-        .catch(error => console.error('休み取得エラー:', error));
+        .catch(err => console.error('休み取得エラー:', err));
 
 
 
@@ -422,41 +892,98 @@ document.addEventListener('DOMContentLoaded', function() {
     // lastUpdate = data.last_update;  // バックエンドからの更新時刻を設定
     // updateCalendar(); // カレンダーを更新する
     
-    let lastUpdate = null; // グローバル変数としてlastUpdateを定義
+    let lastUpdate = null;
 
-    function updateCalendar() {
-        // lastUpdateをクエリパラメータに含める
+    async function updateCalendar() {
+        const isMobileNow = window.matchMedia("(max-width: 767.98px)").matches;
+
+        // ✅スマホ：表示中レンジをAPIで再取得して、cachedEvents＆マーカーも更新
+        if (isMobileNow && window.calendar) {
+            try {
+            const start = window.calendar.view.activeStart.toISOString().slice(0,10);
+            const end   = window.calendar.view.activeEnd.toISOString().slice(0,10);
+
+            const res = await fetch(`/api/shift-events/?start=${start}&end=${end}`);
+            // DOMContentLoaded内の cachedEvents 変数を更新したいので window にも載せる
+            window.__cachedEvents = await res.json();
+
+            // FullCalendar再描画
+            window.calendar.removeAllEvents();
+            window.calendar.addEventSource(window.__cachedEvents);
+
+            // マーカー再描画（既存の dayTypeMap/makeMarker を使わず簡易に）
+            // ※ type が API から来てる前提（shift/off/pending）
+            const map = new Map();
+            for (const ev of window.__cachedEvents) {
+                const d = (ev.start || "").slice(0,10);
+                const t = ev.extendedProps?.type;
+                if (!d || !t) continue;
+                if (!map.has(d)) map.set(d, new Set());
+                map.get(d).add(t);
+            }
+
+            document.querySelectorAll('.fc-daygrid-day').forEach(dayEl => {
+                const d = dayEl.getAttribute('data-date');
+                if (!d) return;
+
+                const types = map.get(d);
+                const old = dayEl.querySelector(".day-markers");
+                if (old) old.remove();
+                if (!types) return;
+
+                const wrap = document.createElement("div");
+                wrap.className = "day-markers";
+
+                const mk = (kind) => {
+                const el = document.createElement("span");
+                el.className = `mk ${kind}`;
+                return el;
+                };
+
+                if (types.has("shift")) wrap.appendChild(mk("circle"));
+                if (types.has("off")) wrap.appendChild(mk("square"));
+                if (types.has("pending")) wrap.appendChild(mk("triangle"));
+
+                dayEl.querySelector(".fc-daygrid-day-top")?.appendChild(wrap);
+            });
+
+            // ボトムシートが開いてるなら中身も更新
+            const sheetOpen = document.getElementById('bottomSheet')?.classList.contains('open');
+            if (sheetOpen && window.selectedDate) {
+                const items = window.__cachedEvents.filter(ev => (ev.start || "").slice(0,10) === window.selectedDate);
+                // openBottomSheet は DOMContentLoaded 内なので、既存の dateClick で開き直すのが簡単
+                // → いったん閉じて、日付クリック相当を再現するのは重いので、UIだけ更新したい場合は後で整える
+            }
+
+            return;
+            } catch (e) {
+            console.error('スマホ更新失敗:', e);
+            return;
+            }
+        }
+
+        // ✅PC：従来通り差分追加
         const url = `/get-update-events/?last_update=${encodeURIComponent(lastUpdate)}`;
 
         fetch(url, {
             method: 'GET',
             headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': getCookie('csrftoken'),
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken'),
             }
         })
-        .then(response => response.json())
+        .then(r => r.json())
         .then(data => {
-            console.log('response data: ', data);
-            if (data.success) {
-                
-                // 既存のカレンダーのイベントを取得
-                const existingEvents = calendar.getEvents();
-                const existingEventIds = existingEvents.map(event => event.id);
+            if (!data.success) return console.error('イベント取得に失敗しました');
 
-                // 新しいイベントをカレンダーに追加
-                data.events.forEach(event => {
-                    if (!existingEventIds.includes(event.id)) {
-                        console.log('Received event:', event);
-                        calendar.addEvent(event); // 自動で eventContent が呼ばれる
-                    }
-                });
-            } else {
-                console.error('イベント取得に失敗しました');
-            }
+            const existingIds = window.calendar.getEvents().map(e => e.id);
+            data.events.forEach(ev => {
+            if (!existingIds.includes(ev.id)) window.calendar.addEvent(ev);
+            });
         })
-        .catch(error => console.error('カレンダー更新エラー:', error));
-    };
+        .catch(err => console.error('カレンダー更新エラー:', err));
+        }
+
 
 
     $('#shiftSubmitForm').on('submit', function(e) {
@@ -489,11 +1016,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
 
-
-// 最初のカレンダー描画
-calendar.render();
-
-});
 </script>
 </body>
 </html>
