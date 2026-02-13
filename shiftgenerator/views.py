@@ -1437,21 +1437,21 @@ def shift_events_api(request):
     events = []
     for shift in qs:
         if shift.holiday:
-            # holiday.id で色決め（今のままでOK）
-            # typeも付ける（off/pendingなど）
-            # 例: holiday.id==1 休み、id==3 未定 みたいにマッピング
             if shift.holiday.id == 1:
                 t = "off"
                 color = "#ff3d3d"
+            elif shift.holiday.id == 2:
+                t = "school"
+                color = "#12a8b3"   # 青□にしたいなら青。水色帯にしたいなら "#12a8b3"
             elif shift.holiday.id == 3:
                 t = "pending"
                 color = "#ede100"
             else:
                 t = "off"
-                color = "#12a8b3"
+                color = "#ff3d3d"
 
             events.append({
-                "id": shift.id,
+                "id": str(shift.id),  # ★ついでに文字列統一（重複事故防止）
                 "title": shift.holiday.holiday_name,
                 "start": shift.date.isoformat() + "T00:00:00",
                 "end": shift.date.isoformat() + "T23:59:59",
@@ -1501,31 +1501,41 @@ def shift_form(request):
     # シフトデータを元にイベントを生成
     for shift in shifts:
         if shift.holiday:
+            name = shift.holiday.holiday_name  # 例: "休み" / "学校関連" / "未定"
 
-            # 休みの種類に応じて色を決定
-            if shift.holiday.id == 1:  # 例: idが1の休み
-                holiday_color = '#ff3d3d'  # 赤
-            elif shift.holiday.id == 2:  # 例: idが2の休み
-                holiday_color = '#12a8b3'  # 水色
-            elif shift.holiday.id == 3:  # 例: idが3の休み
-                holiday_color = '#ede100'  # 黄色
+            # 休みの種類に応じて色
+            if shift.holiday.id == 1:
+                holiday_color = '#ff3d3d'
+            elif shift.holiday.id == 2:
+                holiday_color = '#12a8b3'
+            elif shift.holiday.id == 3:
+                holiday_color = '#ede100'
             else:
-                holiday_color = 'red'  # デフォルトの色
-        
+                holiday_color = 'red'
+
+            # ✅ type 判定（ここが重要）
+            if "学校" in name:
+                t = "school"
+            elif "未定" in name:
+                t = "pending"
+            else:
+                t = "off"   # それ以外は「休み」
+
             events.append({
-                'title': shift.holiday.holiday_name,  # 休みの名前をタイトルとして使用
-                'start': shift.date.isoformat() + 'T00:00:00',  # 一日の始まり
-                'end': shift.date.isoformat() + 'T23:59:59',  # 一日の終わり
-                'id': shift.id,  # シフトIDをそのまま使用
-                'display': 'block',  # 通常のイベントとして表示
-                'extendedProps': {  # extendedPropsに情報を追加
-                'holiday': True,
-                'holidayColor': holiday_color,# 休みの色を追加
-                'starttime': None,
-                'endtime': None,
-                'type': 'pending'
+                'title': name,
+                'start': shift.date.isoformat() + 'T00:00:00',
+                'end': shift.date.isoformat() + 'T23:59:59',
+                'id': shift.id,
+                'display': 'block',
+                'extendedProps': {
+                    'holiday': True,
+                    'holidayColor': holiday_color,
+                    'starttime': None,
+                    'endtime': None,
+                    'type': t,              # ✅ ここで返す
                 }
             })
+
         elif shift.starttime and shift.endtime:
             events.append({
                 'title': f'{shift.starttime.strftime("%H:%M")} - {shift.endtime.strftime("%H:%M")}',
@@ -1534,13 +1544,15 @@ def shift_form(request):
                 'end': f'{shift.date}T{shift.endtime.strftime("%H:%M:%S")}',
                 'starttime': shift.starttime.strftime("%H:%M"),
                 'endtime': shift.endtime.strftime("%H:%M"),
-                'backgroundColor': 'blue',  # 通常のシフトの色
-                'extendedProps': {  # extendedPropsに情報を追加
-                'holiday': False,
-                'starttime': shift.starttime.strftime("%H:%M"),
-                'endtime': shift.endtime.strftime("%H:%M")
+                'backgroundColor': 'blue',
+                'extendedProps': {
+                    'holiday': False,
+                    'starttime': shift.starttime.strftime("%H:%M"),
+                    'endtime': shift.endtime.strftime("%H:%M"),
+                    'type': "shift",        # ✅ 一応これも入れとくと安定
                 }
             })
+
    
     # 履歴が存在する場合のみJSON形式に変換
     history_list = []
@@ -1998,44 +2010,49 @@ def get_update_events(request):
     events = []
     for shift in shifts:
         if shift.holiday:
-            # 休みの種類に応じて色を決定
-            if shift.holiday.id == 1:  # 例: idが1の休み
-                holiday_color = '#ff3d3d'  # 赤
-            elif shift.holiday.id == 2:  # 例: idが2の休み
-                holiday_color = '#12a8b3'  # 水色
-            elif shift.holiday.id == 3:  # 例: idが3の休み
-                holiday_color = '#ede100'  # 黄色
+            if shift.holiday.id == 1:
+                holiday_color = '#ff3d3d'
+                marker_type = 'off'
+            elif shift.holiday.id == 2:
+                holiday_color = '#12a8b3'
+                marker_type = 'school'
+            elif shift.holiday.id == 3:
+                holiday_color = '#ede100'
+                marker_type = 'pending'
             else:
-                holiday_color = 'red'  # デフォルトの色
-            
+                holiday_color = 'red'
+                marker_type = 'off'
+
             events.append({
-                'title': shift.holiday.holiday_name,  # 休みの名前をタイトルとして使用
-                'start': shift.date.isoformat() + 'T00:00:00',  # 一日の始まり
-                'end': shift.date.isoformat() + 'T23:59:59',  # 一日の終わり
-                'id': shift.id,  # シフトIDをそのまま使用
-                'display': 'block',  # 通常のイベントとして表示
-                'extendedProps': {  # extendedPropsに情報を追加
-                'holiday': True,
-                'holidayColor': holiday_color,# 休みの色を追加
-                'starttime': None,
-                'endtime': None
+                'title': shift.holiday.holiday_name,
+                'start': shift.date.isoformat() + 'T00:00:00',
+                'end': shift.date.isoformat() + 'T23:59:59',
+                'id': str(shift.id),  # ★ 文字列に統一（FCの重複回避）
+                'display': 'block',
+                'extendedProps': {
+                    'holiday': True,
+                    'holidayColor': holiday_color,
+                    'markerColor': holiday_color,  # ★フロントが見るなら両方
+                    'starttime': None,
+                    'endtime': None,
+                    'type': marker_type,           # ★ここ重要
                 }
             })
         elif shift.starttime and shift.endtime:
             events.append({
                 'title': f'{shift.starttime.strftime("%H:%M")} - {shift.endtime.strftime("%H:%M")}',
-                'id': shift.id,
+                'id': str(shift.id),  # ★文字列
                 'start': f'{shift.date}T{shift.starttime.strftime("%H:%M:%S")}',
                 'end': f'{shift.date}T{shift.endtime.strftime("%H:%M:%S")}',
-                'starttime': shift.starttime.strftime("%H:%M"),
-                'endtime': shift.endtime.strftime("%H:%M"),
-                'backgroundColor': 'blue',  # 通常のシフトの色
-                'extendedProps': {  # extendedPropsに情報を追加
-                'holiday': False,
-                'starttime': shift.starttime.strftime("%H:%M"),
-                'endtime': shift.endtime.strftime("%H:%M")
+                'backgroundColor': 'blue',
+                'extendedProps': {
+                    'holiday': False,
+                    'starttime': shift.starttime.strftime("%H:%M"),
+                    'endtime': shift.endtime.strftime("%H:%M"),
+                    'type': 'shift',   # ★
                 }
             })
+
     print(events)
 
 

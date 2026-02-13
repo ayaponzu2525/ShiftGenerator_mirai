@@ -9,6 +9,14 @@
     <!-- Bootstrap CSS -->
     <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
     <style>
+        /* 土日セルの薄い背景 */
+        .fc-daygrid-day.is-sat { background: rgba(0, 123, 255, 0.06); }  /* 土: 薄い青 */
+        .fc-daygrid-day.is-sun { background: rgba(255, 59, 48, 0.06); }  /* 日: 薄い赤 */
+
+        /* 日付文字も少し色を寄せる（任意） */
+        .fc-daygrid-day.is-sat .fc-daygrid-day-number { color: #0b5ed7; }
+        .fc-daygrid-day.is-sun .fc-daygrid-day-number { color: #d32f2f; }
+
         .fc-daygrid-day {
             position: relative;
         }
@@ -44,16 +52,159 @@
             padding: 5px 10px;
         }
 
-        /* ===== 日付セルのマーカー（スマホ用） ===== */
-        .day-markers { display:flex; gap:4px; margin-left:6px; align-items:center; }
-        .mk { display:inline-block; }
-        .mk.circle { width:8px; height:8px; border-radius:999px; background:#2b78ff; } /* 青○ */
-        .mk.square { width:8px; height:8px; background:#ff3b30; } /* 赤□ */
-        .mk.triangle {
-        width:0; height:0;
-        border-left:5px solid transparent;
-        border-right:5px solid transparent;
-        border-bottom:9px solid #ffcc00; /* 黄△ */
+        /* ===== セル中央マーカー（PC/スマホ共通） ===== */
+        .fc-daygrid-day { position: relative; }
+
+        .fc-daygrid-day-frame{
+        position: relative;
+        }
+
+        .day-center-marker{
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+
+        /* 日付数字より少し下にしたいならこれだけ微調整 */
+        transform: translateY(6px);
+
+        pointer-events: none;
+        z-index: 2;
+        }
+
+        /* 形状（3種） */
+        .day-center-marker .cm{ display:block; }
+        .day-center-marker .cm.shift{
+        width: 14px; height: 14px; border-radius: 999px;
+        background: #2b78ff;
+        }
+        .day-center-marker .cm.off{
+        width: 18px; height: 18px; border-radius: 999px;
+        border: 3px solid #ff3b30;
+        background: transparent;
+        }
+        .day-center-marker .cm.pending{
+        width: 0; height: 0;
+        border-left: 9px solid transparent;
+        border-right: 9px solid transparent;
+        border-bottom: 16px solid #ffcc00;
+        }
+
+        /* PCのイベント文字を大きく */
+        @media (min-width: 992px){
+        .day-center-marker{ display:none !important; }
+        /* 日セルの中でイベントがはみ出さないように */
+        .fc .fc-daygrid-event,
+        .fc .fc-daygrid-event .fc-event-main{
+            max-width: 100%;
+        }
+
+        /* 文字は1行・はみ出たら … */
+        .fc .pc-shift-time,
+        .fc .pc-holiday-bar{
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* ちょい大きく（好みで微調整） */
+        .fc .pc-shift-time{ font-size: 1.05rem; font-weight: 600; }
+        .fc .pc-holiday-bar{ font-size: 1.0rem; font-weight: 700; padding: 4px 6px !important; }
+        }
+
+        @media (max-width: 991.98px){
+            /* 2個表示のときは左右で半分ずつ */
+        .day-center-marker.two{
+        gap: 8px;
+        }
+
+        /* 休みバーを“半分バー”にする */
+        /* ✅赤帯(off)だけはスロット幅いっぱいに伸ばす */
+        .day-center-marker .cm-slot{
+        flex: 1 1 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        }
+        /* ✅丸/四角/三角は固定サイズ（伸びない） */
+        .day-center-marker .cm.shift{
+        width: 14px; height: 14px;
+        border-radius: 999px;
+        background: #2b78ff;
+        }
+        .day-center-marker .cm.school{
+        width: 18px; height: 18px;
+        border-radius: 4px;
+        background: #007bff;
+        }
+        .day-center-marker .cm.pending{
+        width: 0; height: 0;
+        border-left: 10px solid transparent;
+        border-right: 10px solid transparent;
+        border-bottom: 18px solid #ffcc00;
+        }
+        .day-center-marker.two .cm.shift,
+        .day-center-marker.two .cm.school,
+        .day-center-marker.two .cm.pending{
+        margin: 0 auto;           /* 半分領域の中央へ */
+        }
+        .reg-btn{
+            display: none !important;
+            pointer-events: none !important;
+        }
+        }
+        @media (min-width: 992px){
+        .reg-btn{
+            display: inline-block;
+        }
+        }
+
+
+        /* スマホ：中央マーカーをセル中央に */
+        @media (max-width: 991.98px){
+        .day-center-marker{
+            position:absolute;
+            left:10px; right:10px;
+            top:55%;
+            transform: translateY(-50%);
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            pointer-events:none;
+            z-index:2;
+            gap:10px;
+        }
+
+        /* 休み：赤い太い帯 */
+        .day-center-marker .cm.off{
+            width:100%;
+            height:10px;              /* 太さ */
+            border-radius:999px;
+            background:#ff3b30;
+        }
+
+        /* 未定：黄色い三角 */
+        .day-center-marker .cm.pending{
+            width:0; height:0;
+            border-left:10px solid transparent;
+            border-right:10px solid transparent;
+            border-bottom:18px solid #ffcc00;
+        }
+
+        /* 学校：青い四角 */
+        .day-center-marker .cm.school{
+            width:18px; height:18px;
+            border-radius:4px;
+            background:#12a8b3;
+        }
+
+        /* shift は出さないなら不要（出すなら青丸） */
+        .day-center-marker .cm.shift{
+            width:14px; height:14px;
+            border-radius:999px;
+            background:#2b78ff;
+        }
         }
 
         /* ===== ボトムシート ===== */
@@ -176,7 +327,14 @@
             grid-template-columns: repeat(3, minmax(0, 1fr));
         }
         }
+        /* ✅スマホ：イベントの帯（謎バー）を消す + タップも奪わない */
+        @media (max-width: 991.98px){
+        .fc .fc-daygrid-event{
+            display: none !important;
+        }
+        }
 
+    
         /* ✅ 履歴（grid）の中では width を持たせない（セル幅にフィット） */
         #historyItems .history-item{
         width: auto;
@@ -409,7 +567,9 @@ function toYMD(dateObj){
 
   const calendarEl = document.getElementById('calendar');
 
-  const isMobile = window.matchMedia("(max-width: 767.98px)").matches;
+    const mq = window.matchMedia("(max-width: 991.98px)");
+    const isMobileNow = () => mq.matches;
+
 
   // PC用（従来）: テンプレ埋め込み events を残す
   // Mobile用（新）: APIから範囲取得して cachedEvents を使う
@@ -425,25 +585,47 @@ function toYMD(dateObj){
   let historyCache = null;
   let historyFetching = false;
 
-  function buildDayTypeMap(events) {
-    dayTypeMap.clear();
-    for (const ev of events) {
-      const d = (ev.start || "").slice(0,10);
-      // 旧データには type が無い可能性があるので推定
-      let t = ev.extendedProps?.type;
-      if (!t) {
-        if (ev.extendedProps?.holiday) {
-          // holiday idで未定/休みを判定したいならここで分岐
-          t = "off"; // 暫定（未定はpendingにしたいならAPI側で付けるのが確実）
-        } else {
-          t = "shift";
-        }
-      }
-      if (!d || !t) continue;
-      if (!dayTypeMap.has(d)) dayTypeMap.set(d, new Set());
-      dayTypeMap.get(d).add(t);
+    function bump(map, key, type){
+    if (!map.has(key)) map.set(key, {shift:0, off:0, pending:0, school:0});
+    map.get(key)[type] = (map.get(key)[type] || 0) + 1;
     }
-  }
+
+    function buildDayTypeMap(events) {
+    dayTypeMap.clear();
+
+    for (const ev of events) {
+        const d = (ev.start || "").slice(0, 10);
+        if (!d) continue;
+
+        const title = (ev.title || "");
+        const ep = ev.extendedProps || {};
+
+        // ① APIが type を返してくれるなら最優先
+        let t = ep.type;
+
+        // ② ない場合は推定
+        if (!t) {
+        const looksHoliday = !!ep.holiday || !!ep.holidayColor;
+
+        // ★学校は holiday より優先
+        if (title.includes("学校")) {
+            t = "school";
+        } else if (looksHoliday) {
+            if (title.includes("未定")) t = "pending";
+            else t = "off";
+        } else if (title.includes("未定")) {
+            t = "pending";
+        } else {
+            t = "shift";
+        }
+        }
+
+        bump(dayTypeMap, d, t);
+    }
+    }
+
+
+
 
   function makeMarker(kind){
     const el = document.createElement("span");
@@ -453,19 +635,69 @@ function toYMD(dateObj){
 
   function renderMarkersForDayCell(info) {
     const d = toYMD(info.date);
-    const types = dayTypeMap.get(d);
-    if (!types) return;
+    const counts = dayTypeMap.get(d);
 
-    const old = info.el.querySelector(".day-markers");
-    if (old) old.remove();
+    info.el.classList.remove('has-off','has-pending','has-shift','has-school');
+    info.el.querySelector(".day-center-marker")?.remove();
+
+    if (!counts) return;
+
+    // 赤帯/黄帯などのためにクラス付与
+    if (counts.off) info.el.classList.add('has-off');
+    if (counts.pending) info.el.classList.add('has-pending');
+    if (counts.school) info.el.classList.add('has-school');
+    if (counts.shift) info.el.classList.add('has-shift');
+
+    // PCでは中央マーカー作らない
+    if (!isMobileNow()) return;
+
+    // ✅スマホ中央に最大2個
+    const icons = [];
+    if (counts.off) icons.push("off");
+    if (icons.length < 2 && counts.pending) icons.push("pending");
+    if (icons.length < 2 && counts.school) icons.push("school");
+
+    const remain = 2 - icons.length;
+    if (remain > 0 && counts.shift) {
+    const n = Math.min(remain, counts.shift);
+    for (let i = 0; i < n; i++) icons.push("shift");
+    }
+
+    if (!icons.length) return;
 
     const wrap = document.createElement("div");
-    wrap.className = "day-markers";
-    if (types.has("shift")) wrap.appendChild(makeMarker("circle"));
-    if (types.has("off")) wrap.appendChild(makeMarker("square"));
-    if (types.has("pending")) wrap.appendChild(makeMarker("triangle"));
-    info.el.querySelector(".fc-daygrid-day-top")?.appendChild(wrap);
-  }
+    wrap.className = "day-center-marker";
+    if (icons.length >= 2) wrap.classList.add("two");
+
+    for (const k of icons) {
+    const slot = document.createElement("div");
+    slot.className = "cm-slot";
+
+    const mk = document.createElement("span");
+    mk.className = `cm ${k}`;
+
+    slot.appendChild(mk);
+    wrap.appendChild(slot);
+    }
+
+const frame = info.el.querySelector(".fc-daygrid-day-frame") || info.el;
+frame.appendChild(wrap);
+
+
+    wrap.className = "day-center-marker";
+    if (icons.length === 2) wrap.classList.add("two");
+    }
+
+
+// ✅ ここも差し替え（そのままでもOKだけど一応セット）
+function rerenderAllDayDecorations() {
+  document.querySelectorAll('.fc-daygrid-day').forEach(dayEl => {
+    const dateStr = dayEl.getAttribute('data-date');
+    if (!dateStr) return;
+    const dateObj = new Date(dateStr + "T00:00:00");
+    renderMarkersForDayCell({ date: dateObj, el: dayEl });
+  });
+}
 
   async function ensureHistoryLoaded() {
     if (historyCache || historyFetching) return;
@@ -584,131 +816,143 @@ function toYMD(dateObj){
     locale: 'ja',
     timeZone: 'Asia/Tokyo',
 
-    // ✅ スマホだけ：表示範囲に応じてAPI取得
-    datesSet: async (info) => {
-      if (!isMobile) return; // PCは従来埋め込みのまま
-      try {
-        const start = info.startStr.slice(0,10);
-        const end = info.endStr.slice(0,10);
-        const res = await fetch(`/api/shift-events/?start=${start}&end=${end}`);
-        cachedEvents = await res.json();
-
-        buildDayTypeMap(cachedEvents);
-        window.calendar.removeAllEvents();
-        window.calendar.addEventSource(cachedEvents);
-      } catch (e) {
-        console.error('イベントの取得に失敗しました:', e);
-      }
-      if (isMobile) {
-        document.querySelectorAll('.fc-daygrid-day').forEach(dayEl => {
-            // FullCalendarが日付を data-date に持ってる
-            const d = dayEl.getAttribute('data-date');
-            if (!d) return;
-            const types = dayTypeMap.get(d);
-            if (!types) return;
-
-            const old = dayEl.querySelector(".day-markers");
-            if (old) old.remove();
-
-            const wrap = document.createElement("div");
-            wrap.className = "day-markers";
-            if (types.has("shift")) wrap.appendChild(makeMarker("circle"));
-            if (types.has("off")) wrap.appendChild(makeMarker("square"));
-            if (types.has("pending")) wrap.appendChild(makeMarker("triangle"));
-
-            dayEl.querySelector(".fc-daygrid-day-top")?.appendChild(wrap);
-        });
-        }
-
+    dayCellClassNames: function(arg){
+        const dow = arg.date.getDay(); // 0=日,6=土
+        if (dow === 0) return ['is-sun'];
+        if (dow === 6) return ['is-sat'];
+        return [];
     },
 
+    // ✅ スマホだけ：表示範囲に応じてAPI取得
+    datesSet: async (info) => {
+        if (!isMobileNow()) return;
+
+        const start = info.startStr.slice(0,10);
+        const end   = info.endStr.slice(0,10);
+        const res = await fetch(`/api/shift-events/?start=${start}&end=${end}`);
+        cachedEvents = await res.json();
+        // ログ学校関連
+        const s = cachedEvents.find(e => (e.title||"").includes("学校"));
+        console.log("school event from API", s);
+        buildDayTypeMap(cachedEvents);
+        console.log("dayTypeMap for school day", s?.start?.slice(0,10), dayTypeMap.get(s?.start?.slice(0,10)));
+
+        window.__cachedEvents = cachedEvents;
+
+        buildDayTypeMap(cachedEvents);
+
+        window.calendar.removeAllEvents();
+        window.calendar.addEventSource(cachedEvents);
+
+        requestAnimationFrame(() => rerenderAllDayDecorations());
+        },
+
+
+
+
     // 初期イベント（PC向け）
-    events: isMobile ? [] : eventsEmbedded,
+    events: eventsEmbedded,
 
     eventContent: function(arg) {
       // ✅ スマホ：月セル内はスッキリ（何も出さない or 最小）
-      if (isMobile) return { domNodes: [] };
+      if (isMobileNow()) return { domNodes: [] };
 
       // ✅ PC：従来の表示
       const title = document.createElement('div');
-      if (arg.event.extendedProps.holiday) {
-        title.innerHTML = `<div style="display:flex;justify-content:center;align-items:center;background-color:${arg.event.extendedProps.holidayColor};color:white;padding:5px;border-radius:4px;width:100%;">${arg.event.title}</div>`;
-      } else {
+        if (arg.event.extendedProps.holiday) {
+        title.innerHTML = `
+            <div class="pc-holiday-bar"
+                style="display:flex;justify-content:center;align-items:center;
+                        background-color:${arg.event.extendedProps.holidayColor};
+                        color:white;padding:5px;border-radius:4px;width:100%;">
+            ${arg.event.title}
+            </div>`;
+        } else {
         const startTime = formatTime(arg.event.extendedProps.starttime);
         const endTime = formatTime(arg.event.extendedProps.endtime);
-        title.innerHTML = `<div style="display:flex;align-items:center;">
-          <span class="fc-event-dot" style="background-color:${arg.event.backgroundColor};"></span>
-          ${startTime} - ${endTime}
-        </div>`;
-      }
+        title.innerHTML = `
+            <div class="pc-shift-time" style="display:flex;align-items:center;">
+            <span class="fc-event-dot" style="background-color:${arg.event.backgroundColor};"></span>
+            ${startTime} - ${endTime}
+            </div>`;
+        }
       return { domNodes: [title] };
     },
 
     eventClick: function(info) {
-    const isMobileNow = window.matchMedia("(max-width: 767.98px)").matches;
+        const isMobileNow = window.matchMedia("(max-width: 991.98px)").matches;
 
-    if (isMobileNow) {
-        // スマホ：詳細へは飛ばさない（誤タップ防止）
-        info.jsEvent?.preventDefault();
-        info.jsEvent?.stopPropagation();
-        return;
-    }
+        if (isMobileNow) {
+            info.jsEvent?.preventDefault();
+            info.jsEvent?.stopPropagation();
 
-    // PC：従来通り詳細へ
-    const shiftId = info.event.id;
-    if (shiftId) window.location.href = "/shift-detail/" + shiftId + "/";
-    },
+            // ✅イベントをタップしても、その日のボトムシートを開く
+            const d = (info.event.startStr || "").slice(0,10);
+            const items = (window.__cachedEvents || cachedEvents).filter(ev => (ev.start || "").slice(0,10) === d);
+            openBottomSheet(d, items);
+            return;
+        }
+
+        // PC：従来通り詳細へ
+        const shiftId = info.event.id;
+        if (shiftId) window.location.href = "/shift-detail/" + shiftId + "/";
+        },
+
 
 
 
     dayCellDidMount: function(info) {
-    if (isMobile) {
-        // スマホはここはマーカーだけ（datesSetで描画してるなら無くてもOK）
+        // マーカーは毎回OK（内部で掃除してるし）
         renderMarkersForDayCell(info);
-        return;
-    }
 
-    const dateStr = toYMD(info.date); // ✅ここが重要（info.dateStr は無い）
+        // --- 登録ボタンを常に用意（なければ作る） ---
+        // 既にあるなら作らない
+        if (info.el.querySelector(".reg-btn")) return;
 
-    const button = document.createElement('button');
-    button.innerText = '登録';
-    button.className = 'btn btn-primary btn-sm';
+        const dateStr = toYMD(info.date);
 
-    button.onclick = function(e) {
-        e.stopPropagation();
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.innerText = '登録';
+        button.className = 'btn btn-primary btn-sm reg-btn';
 
-        window.selectedDate = dateStr;
-        document.getElementById('dateDisplay').textContent = dateStr;
-        $('#shiftModal').modal('show');
+        button.onclick = function(e) {
+            e.stopPropagation();
 
-        fetch('/get-shift-history/')
-        .then(r => r.json())
-        .then(data => {
-            const historyContainer = document.getElementById('historyContainer');
-            historyContainer.innerHTML = '';
-            data.forEach(history => {
-            const historyButton = document.createElement('button');
-            historyButton.className = 'btn btn-primary btn-sm';
-            historyButton.style.marginRight = '10px';
-            historyButton.style.marginBottom = '10px';
-            historyButton.textContent = `${formatTime(history.starttime)} - ${formatTime(history.endtime)}`;
-            historyButton.onclick = () => registerShift(history.starttime, history.endtime, dateStr);
-            historyContainer.appendChild(historyButton);
-            });
-        })
-        .catch(err => console.error('履歴取得エラー:', err));
-    };
+            window.selectedDate = dateStr;
+            document.getElementById('dateDisplay').textContent = dateStr;
+            $('#shiftModal').modal('show');
 
-    info.el.appendChild(button);
+            fetch('/get-shift-history/')
+            .then(r => r.json())
+            .then(data => {
+                const historyContainer = document.getElementById('historyContainer');
+                historyContainer.innerHTML = '';
+                data.forEach(history => {
+                const historyButton = document.createElement('button');
+                historyButton.className = 'btn btn-primary btn-sm';
+                historyButton.style.marginRight = '10px';
+                historyButton.style.marginBottom = '10px';
+                historyButton.textContent = `${formatTime(history.starttime)} - ${formatTime(history.endtime)}`;
+                historyButton.onclick = () => registerShift(history.starttime, history.endtime, dateStr);
+                historyContainer.appendChild(historyButton);
+                });
+            })
+            .catch(err => console.error('履歴取得エラー:', err));
+        };
+
+        info.el.appendChild(button);
     },
+
 
     // ✅ スマホ：日付タップでボトムシート
     dateClick: function(info) {
-      if (!isMobile) return;
-      const d = toYMD(info.date);
-      const items = (window.__cachedEvents || cachedEvents).filter(ev => (ev.start || "").slice(0,10) === d);
-      openBottomSheet(d, items);
+    if (!isMobileNow()) return; // ★PCは何もしない（登録ボタン運用）
+    const d = toYMD(info.date);
+    const items = (window.__cachedEvents || cachedEvents).filter(ev => (ev.start || "").slice(0,10) === d);
+    openBottomSheet(d, items);
     },
+
   });
 
   $('#shiftModal').on('shown.bs.modal', function () {
@@ -717,11 +961,101 @@ function toYMD(dateObj){
     });
 
   // 初期用：PCは埋め込み、スマホは（初回datesSetが走って取る）に任せる
-  if (!isMobile) {
+  if (!isMobileNow()) {
     buildDayTypeMap(eventsEmbedded);
   }
 
   window.calendar.render();
+    mq.addEventListener("change", async () => {
+    // いったんボトムシート閉じる
+    if (!isMobileNow()) window.closeBottomSheet?.();
+
+    // ★セル装飾を全部掃除
+    document.querySelectorAll('.fc-daygrid-day').forEach(dayEl => {
+        dayEl.querySelector(".day-center-marker")?.remove();
+        dayEl.classList.remove('has-off','has-pending','has-shift','has-school');
+    });
+
+    // ★スマホに入ったらAPIを取り直して装飾も更新
+    if (isMobileNow()) {
+        const start = window.calendar.view.activeStart.toISOString().slice(0,10);
+        const end   = window.calendar.view.activeEnd.toISOString().slice(0,10);
+        const res = await fetch(`/api/shift-events/?start=${start}&end=${end}`);
+        cachedEvents = await res.json();
+        window.__cachedEvents = cachedEvents;
+
+        buildDayTypeMap(cachedEvents);
+        window.calendar.removeAllEvents();
+        window.calendar.addEventSource(cachedEvents);
+        rerenderAllDayDecorations();
+    } else {
+        // PCに入ったら埋め込み表示に戻す（装飾は作られない）
+        window.calendar.removeAllEvents();
+        window.calendar.addEventSource(eventsEmbedded);
+    }
+
+    window.calendar.updateSize?.();
+    });
+
+    let lastUpdate = null;
+
+    async function updateCalendar() {
+    const isMobile = window.matchMedia("(max-width: 991.98px)").matches;
+
+    // ✅スマホ：レンジをAPIで取り直して「イベント＋装飾」を更新
+    if (isMobile && window.calendar) {
+        try {
+        const start = window.calendar.view.activeStart.toISOString().slice(0,10);
+        const end   = window.calendar.view.activeEnd.toISOString().slice(0,10);
+
+        const res = await fetch(`/api/shift-events/?start=${start}&end=${end}`);
+        window.__cachedEvents = await res.json();
+
+        // ①イベント更新
+        window.calendar.removeAllEvents();
+        window.calendar.addEventSource(window.__cachedEvents);
+
+        // ②タイプMap更新
+        buildDayTypeMap(window.__cachedEvents);
+
+        // ③スマホ装飾（赤帯/△/□）を全セルに再描画
+        rerenderAllDayDecorations();
+
+        return;
+        } catch (e) {
+        console.error('スマホ更新失敗:', e);
+        return;
+        }
+    }
+
+    // ✅PC：従来通り差分追加（そのまま）
+    const url = `/get-update-events/?last_update=${encodeURIComponent(lastUpdate)}`;
+
+    fetch(url, {
+        method: 'GET',
+        headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': getCookie('csrftoken'),
+        }
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (!data.success) return console.error('イベント取得に失敗しました');
+
+        data.events.forEach(ev => {
+        const id = ev.id != null ? String(ev.id) : null;
+        if (!id) return; // id無しは一旦追加しない（←重要）
+
+        // FullCalendar側も文字列で探す
+        if (!window.calendar.getEventById(id)) {
+            window.calendar.addEvent({ ...ev, id });
+        }
+        });
+    })
+    .catch(err => console.error('カレンダー更新エラー:', err));
+    }
+
+    window.updateCalendar = updateCalendar;
 });
 
     
@@ -745,7 +1079,7 @@ function toYMD(dateObj){
                 $('#shiftModal').modal('hide'); // モーダルを閉じる
                 window.closeBottomSheet();// ✅スマホ用
                 lastUpdate = data.last_update;  // バックエンドからの更新時刻を設定
-                updateCalendar(); // カレンダーを更新する
+                window.updateCalendar?.(); // カレンダーを更新する
             } else {
                 alert('シフト登録に失敗しました');
             }
@@ -785,7 +1119,7 @@ function toYMD(dateObj){
                 $('#shiftModal').modal('hide'); // モーダルを閉じる
                 window.closeBottomSheet(); // ✅スマホ用
                 lastUpdate = data.last_update; // バックエンドからの更新時刻を設定
-                updateCalendar();
+                window.updateCalendar?.();
             } else {
                 console.error('休みの登録に失敗しました:', data.error);
             }
@@ -892,99 +1226,6 @@ function toYMD(dateObj){
     // lastUpdate = data.last_update;  // バックエンドからの更新時刻を設定
     // updateCalendar(); // カレンダーを更新する
     
-    let lastUpdate = null;
-
-    async function updateCalendar() {
-        const isMobileNow = window.matchMedia("(max-width: 767.98px)").matches;
-
-        // ✅スマホ：表示中レンジをAPIで再取得して、cachedEvents＆マーカーも更新
-        if (isMobileNow && window.calendar) {
-            try {
-            const start = window.calendar.view.activeStart.toISOString().slice(0,10);
-            const end   = window.calendar.view.activeEnd.toISOString().slice(0,10);
-
-            const res = await fetch(`/api/shift-events/?start=${start}&end=${end}`);
-            // DOMContentLoaded内の cachedEvents 変数を更新したいので window にも載せる
-            window.__cachedEvents = await res.json();
-
-            // FullCalendar再描画
-            window.calendar.removeAllEvents();
-            window.calendar.addEventSource(window.__cachedEvents);
-
-            // マーカー再描画（既存の dayTypeMap/makeMarker を使わず簡易に）
-            // ※ type が API から来てる前提（shift/off/pending）
-            const map = new Map();
-            for (const ev of window.__cachedEvents) {
-                const d = (ev.start || "").slice(0,10);
-                const t = ev.extendedProps?.type;
-                if (!d || !t) continue;
-                if (!map.has(d)) map.set(d, new Set());
-                map.get(d).add(t);
-            }
-
-            document.querySelectorAll('.fc-daygrid-day').forEach(dayEl => {
-                const d = dayEl.getAttribute('data-date');
-                if (!d) return;
-
-                const types = map.get(d);
-                const old = dayEl.querySelector(".day-markers");
-                if (old) old.remove();
-                if (!types) return;
-
-                const wrap = document.createElement("div");
-                wrap.className = "day-markers";
-
-                const mk = (kind) => {
-                const el = document.createElement("span");
-                el.className = `mk ${kind}`;
-                return el;
-                };
-
-                if (types.has("shift")) wrap.appendChild(mk("circle"));
-                if (types.has("off")) wrap.appendChild(mk("square"));
-                if (types.has("pending")) wrap.appendChild(mk("triangle"));
-
-                dayEl.querySelector(".fc-daygrid-day-top")?.appendChild(wrap);
-            });
-
-            // ボトムシートが開いてるなら中身も更新
-            const sheetOpen = document.getElementById('bottomSheet')?.classList.contains('open');
-            if (sheetOpen && window.selectedDate) {
-                const items = window.__cachedEvents.filter(ev => (ev.start || "").slice(0,10) === window.selectedDate);
-                // openBottomSheet は DOMContentLoaded 内なので、既存の dateClick で開き直すのが簡単
-                // → いったん閉じて、日付クリック相当を再現するのは重いので、UIだけ更新したい場合は後で整える
-            }
-
-            return;
-            } catch (e) {
-            console.error('スマホ更新失敗:', e);
-            return;
-            }
-        }
-
-        // ✅PC：従来通り差分追加
-        const url = `/get-update-events/?last_update=${encodeURIComponent(lastUpdate)}`;
-
-        fetch(url, {
-            method: 'GET',
-            headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': getCookie('csrftoken'),
-            }
-        })
-        .then(r => r.json())
-        .then(data => {
-            if (!data.success) return console.error('イベント取得に失敗しました');
-
-            const existingIds = window.calendar.getEvents().map(e => e.id);
-            data.events.forEach(ev => {
-            if (!existingIds.includes(ev.id)) window.calendar.addEvent(ev);
-            });
-        })
-        .catch(err => console.error('カレンダー更新エラー:', err));
-        }
-
-
 
     $('#shiftSubmitForm').on('submit', function(e) {
         e.preventDefault();
