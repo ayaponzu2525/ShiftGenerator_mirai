@@ -10,6 +10,14 @@
 <body>
     <div class="container mt-5">
         <h2 class="mb-4">シフト新規登録</h2>
+        {% if messages %}
+        {% for message in messages %}
+            <div class="alert alert-{{ message.tags|default:'danger' }} mt-2">
+            {{ message }}
+            </div>
+        {% endfor %}
+        {% endif %}
+
         <!-- 選択された日付の表示 -->
         <div class="alert alert-info">
             選択された日付: {{ date }}
@@ -45,11 +53,18 @@
     </div>
     <script>
         document.querySelector('form').addEventListener('submit', function(event) {
-            var startTime = document.getElementById('start-time').value;
-            var endTime = document.getElementById('end-time').value;
-            var selectedDate = document.querySelector('input[name="date"]').value;
-    
+            const startTime = document.getElementById('start-time').value;
+            const endTime = document.getElementById('end-time').value;
+            const selectedDate = document.querySelector('input[name="date"]').value;
+
             console.log(`Date: ${selectedDate}, Start Time: ${startTime}, End Time: ${endTime}`);
+
+            // "HH:MM" はゼロ埋め前提で文字列比較OK
+            if (endTime <= startTime) {
+            event.preventDefault(); // ★ここで送信を止める
+            alert('終了時間は開始時間より後にしてください。');
+            return;
+            }
         });
     </script>
 </body>

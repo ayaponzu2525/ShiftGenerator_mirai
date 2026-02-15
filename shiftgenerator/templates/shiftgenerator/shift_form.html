@@ -1059,8 +1059,38 @@ function rerenderAllDayDecorations() {
 });
 
     
+// ===== 追加：日別の件数/休み判定 =====
+function _getEventsOnDate(dateStr) {
+  const cal = window.calendar;         // updateCalendar でも使ってるやつ:contentReference[oaicite:6]{index=6}
+  if (!cal) return [];
+  return cal.getEvents().filter(ev => {
+    const d = (ev.startStr || '').slice(0, 10);
+    return d === dateStr;
+  });
+}
+
+function _isHolidayEvent(ev) {
+  return !!(ev.extendedProps && ev.extendedProps.holiday); // eventContent でも holiday を見てる:contentReference[oaicite:7]{index=7}
+}
+
+function _validateAddShift(dateStr) {
+  const evs = _getEventsOnDate(dateStr);
+  if (evs.some(_isHolidayEvent)) return '休みが入っている日は、予定を追加できません。';
+  const shiftCount = evs.filter(ev => !_isHolidayEvent(ev)).length;
+  if (shiftCount >= 2) return '1日に登録できる予定は最大2つまでです。';
+  return null;
+}
+
+function _validateAddHoliday(dateStr) {
+  const evs = _getEventsOnDate(dateStr);
+  if (evs.length > 0) return 'この日は既に予定が入っているため、休みは登録できません（先に予定を削除してください）。';
+  return null;
+}
+// ↑バリデーションチェック関数群↑
 
     function registerShift(starttime, endtime, date) {
+        const msg = _validateAddShift(date);
+        if (msg) { alert(msg); return; }
         fetch('/history-shift-register/', {
             method: 'POST',
             headers: {
@@ -1093,6 +1123,9 @@ function rerenderAllDayDecorations() {
             console.error("休みの種類か日付が選択されていません");
             return;
         }
+
+        const msg = _validateAddHoliday(date);
+        if (msg) { alert(msg); return; }
 
         // データ送信
         fetch('/holiday-shift-register/', {
@@ -1197,16 +1230,45 @@ function rerenderAllDayDecorations() {
     }
 
     // Register Buttonがクリックされたときの処理
-    document.getElementById('registerButton').addEventListener('click', function() {
-        var date = window.selectedDate; // グローバル変数から日付を取得
-        if (!date) {
-            console.error('日付が設定されていません');
-            return;
+    document.getElementById('registerButton').addEventListener('click', async function() {
+        const date = window.selectedDate;
+        if (!date) return console.error('日付が設定されていません');
+
+        // ① まず画面上のカレンダーから判定（即時）
+        const cal = window.calendar;
+        const localEvents = cal ? cal.getEvents().filter(ev => (ev.startStr || '').slice(0,10) === date) : [];
+        const localHasHoliday = localEvents.some(ev => ev.extendedProps && ev.extendedProps.holiday);
+        const localShiftCount = localEvents.filter(ev => !(ev.extendedProps && ev.extendedProps.holiday)).length;
+
+        if (localHasHoliday) { alert('休みが入っている日は、予定を追加できません。'); return; }
+        if (localShiftCount >= 2) { alert('1日に登録できる予定は最大2つまでです。'); return; }
+
+        // ② すり抜け対策：サーバ側の最新状態でも判定してから遷移
+        try {
+            const next = new Date(date + 'T00:00:00');
+            next.setDate(next.getDate() + 1);
+            const toYMD = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+            const end = toYMD(next);
+
+            const res = await fetch(`/api/shift-events/?start=${encodeURIComponent(date)}&end=${encodeURIComponent(end)}`);
+            const events = await res.json();
+
+            const hasHoliday = events.some(e => e.extendedProps && e.extendedProps.holiday);
+            const shiftCount = events.filter(e => !(e.extendedProps && e.extendedProps.holiday)).length;
+
+            if (hasHoliday) { alert('休みが入っている日は、予定を追加できません。'); return; }
+            if (shiftCount >= 2) { alert('1日に登録できる予定は最大2つまでです。'); return; }
+        } catch (e) {
+            console.warn('新規登録前チェック(API)に失敗:', e);
+            // API落ちてる時は “安全側” に倒して止めてもいいけど、運用次第
+            // alert('確認に失敗しました。少し待ってから再度お試しください。'); return;
         }
-        var registerUrl = document.getElementById('calendar').getAttribute('data-url');
-        var newRegisterUrl = `${registerUrl}?date=${encodeURIComponent(date)}`;
-        window.location.href = newRegisterUrl; // shift_register.html に遷移
+
+        // ③ OKなら遷移
+        const registerUrl = document.getElementById('calendar').getAttribute('data-url');
+        window.location.href = `${registerUrl}?date=${encodeURIComponent(date)}`;
     });
+
 
     // タイムゾーンを明示的に指定して日付を解析する関数
     function parseJapanDate(dateString) {

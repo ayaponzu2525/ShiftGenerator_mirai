@@ -1803,79 +1803,108 @@ def shift_register(request):
 @login_required
 @csrf_exempt
 def new_register_shift(request):
-    if request.method == 'POST':
-        try:
-            # JSONリクエストとPOSTリクエストの区別
-            if request.content_type == 'application/json':
-                data = json.loads(request.body)
-                date = data.get('date')
-                time_range = data.get('time_range')
-            else:
-                date = request.POST.get('date')
-                time_range = f"{request.POST.get('start_time')} - {request.POST.get('end_time')}"
+    # time_slots を作る共通処理（GETと同じ）
+    def build_context(date_str):
+        user = request.user
+        staff_profile = getattr(user, 'staff_profile', None)
+        staff_name = staff_profile.name if staff_profile else ''
+        time_slots = []
+        base_time = datetime(2024, 1, 1, 8, 30)
+        end_time = datetime(2024, 1, 1, 20, 0)
+        while base_time <= end_time:
+            time_slots.append(base_time.strftime('%H:%M'))
+            base_time += timedelta(minutes=15)
 
-            starttime, endtime = time_range.split(' - ')
+        return {
+            'date': date_str,
+            'time_slots': time_slots,
+            'staff_name': staff_name,
+            'username': user.username
+        }
 
-            # 日付と曜日を取得
-            date_obj = datetime.strptime(date, '%Y-%m-%d')
-            day_of_week = date_obj.weekday()  # 曜日 (0=月曜日, 6=日曜日)
-
-            # DayOfWeek モデルから対応する曜日を取得
-            try:
-                day_of_week_instance = DayOfWeek.objects.get(day_number=day_of_week)
-            except DayOfWeek.DoesNotExist:
-                return JsonResponse({'success': False, 'error': 'DayOfWeek インスタンスが見つかりませんでした'}, status=400)
-
-            # 時間をdatetimeオブジェクトに変換
-            starttime = datetime.strptime(starttime, '%H:%M').time()
-            endtime = datetime.strptime(endtime, '%H:%M').time()
-
-            # ユーザーのスタッフプロファイルを取得
-            staff_profile = getattr(request.user, 'staff_profile', None)
-            if not staff_profile:
-                return redirect('shiftgenerator:index')
-
-            # シフトの登録
-            shift = ShiftPreference.objects.create(
-                staff=staff_profile,
-                starttime=starttime,
-                endtime=endtime,
-                date=date,
-                day_of_week=day_of_week_instance  # ここでday_of_weekを正しくセット
-            )
-            print(f"ShiftPreference に登録: {shift}")
-
-            # ShiftHistory に重複がない場合に保存
-            if ShiftHistory.objects.filter(staff=staff_profile, starttime=starttime, endtime=endtime).count() == 0:
-                ShiftHistory.objects.create(
-                    staff=staff_profile,
-                    starttime=starttime,
-                    endtime=endtime
-                )
-                print("ShiftHistory に登録")
-            else:
-                print("ShiftHistory に重複するシフトがあるのでスキップしました")
-
-            # 履歴が10個を超えた場合、古い履歴を削除
-            if ShiftHistory.objects.filter(staff=staff_profile).count() > 10:
-                oldest_history = ShiftHistory.objects.filter(staff=staff_profile).earliest('created_at')
-                oldest_history.delete()
-                print(f"古い ShiftHistory を削除: {oldest_history}")
-
-            # JSONリクエストならJSONでレスポンス、通常のPOSTリクエストならリダイレクト
-            if request.content_type == 'application/json':
-                return JsonResponse({'success': True})
-            else:
-                return redirect('shiftgenerator:shift-form')
-
-        except Exception as e:
-            print(f"Error occurred: {e}")  # エラーログを出力
-            if request.content_type == 'application/json':
-                return JsonResponse({'success': False, 'error': str(e)})
-            else:
-                return redirect('shiftgenerator:shift-form')
-    else:
+    if request.method != 'POST':
         return redirect('shiftgenerator:shift-form')
+
+    try:
+        # JSONリクエストとPOSTリクエストの区別
+        is_json = (request.content_type == 'application/json')
+        if is_json:
+            data = json.loads(request.body)
+            date_str = data.get('date')
+            time_range = data.get('time_range')
+        else:
+            date_str = request.POST.get('date')
+            time_range = f"{request.POST.get('start_time')} - {request.POST.get('end_time')}"
+
+        start_s, end_s = time_range.split(' - ')
+        starttime = datetime.strptime(start_s, '%H:%M').time()
+        endtime = datetime.strptime(end_s, '%H:%M').time()
+
+        # ユーザーのスタッフプロファイルを取得
+        staff_profile = getattr(request.user, 'staff_profile', None)
+        if not staff_profile:
+            return redirect('shiftgenerator:index')
+
+        # === ここにあなたが入れたサーバ側バリデーション（例） ===
+        if endtime <= starttime:
+            msg = '終了時間は開始時間より後にしてください。'
+            if is_json:
+                return JsonResponse({'success': False, 'error': msg}, status=400)
+            messages.error(request, msg)
+            return render(request, 'shiftgenerator/shift_register.html', build_context(date_str))
+
+        # 休みが入っている日は予定追加禁止（例）
+        if ShiftPreference.objects.filter(staff=staff_profile, date=date_str, holiday__isnull=False).exists():
+            msg = '休みが入っている日は、予定を追加できません。'
+            if is_json:
+                return JsonResponse({'success': False, 'error': msg}, status=400)
+            messages.error(request, msg)
+            return render(request, 'shiftgenerator/shift_register.html', build_context(date_str))
+
+        # 1日2件まで（例）
+        if ShiftPreference.objects.filter(staff=staff_profile, date=date_str, holiday__isnull=True).count() >= 2:
+            msg = '1日に登録できる予定は最大2つまでです。'
+            if is_json:
+                return JsonResponse({'success': False, 'error': msg}, status=400)
+            messages.error(request, msg)
+            return render(request, 'shiftgenerator/shift_register.html', build_context(date_str))
+        # =====================================================
+
+        # 日付と曜日
+        date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+        dow = date_obj.weekday()
+        day_of_week_instance = DayOfWeek.objects.get(day_number=dow)
+
+        # 保存
+        shift = ShiftPreference.objects.create(
+            staff=staff_profile,
+            starttime=starttime,
+            endtime=endtime,
+            date=date_str,
+            day_of_week=day_of_week_instance
+        )
+
+        # ShiftHistory（既存ロジック維持）
+        if ShiftHistory.objects.filter(staff=staff_profile, starttime=starttime, endtime=endtime).count() == 0:
+            ShiftHistory.objects.create(staff=staff_profile, starttime=starttime, endtime=endtime)
+
+        if ShiftHistory.objects.filter(staff=staff_profile).count() > 10:
+            oldest_history = ShiftHistory.objects.filter(staff=staff_profile).earliest('created_at')
+            oldest_history.delete()
+
+        if is_json:
+            return JsonResponse({'success': True})
+        return redirect('shiftgenerator:shift-form')
+
+    except Exception as e:
+        # 予期せぬエラーも「同じ画面に戻して表示」
+        is_json = (request.content_type == 'application/json')
+        if is_json:
+            return JsonResponse({'success': False, 'error': str(e)}, status=400)
+
+        messages.error(request, f'登録に失敗しました: {e}')
+        date_str = request.POST.get('date') or ''
+        return render(request, 'shiftgenerator/shift_register.html', build_context(date_str))
 
 
 def holiday_shift_register(request):
@@ -1909,6 +1938,14 @@ def holiday_shift_register(request):
         if not staff_profile:
             return JsonResponse({'success': False, 'error': 'スタッフプロファイルが見つかりません'}, status=400)
 
+        # === 追加: その日に何か入ってたら休み登録禁止 ===
+        exists_any = ShiftPreference.objects.filter(
+            staff=staff_profile,
+            date=date
+        ).exists()
+        if exists_any:
+            return JsonResponse({'success': False, 'error': 'この日は既に予定が入っているため休みを登録できません'}, status=400)
+
         # Holiday モデルから選択された休みを取得
         try:
             holiday_instance = Holiday.objects.get(id=holiday_id)
@@ -1933,7 +1970,7 @@ def holiday_shift_register(request):
         print(f"Error: {str(e)}")  # エラーメッセージをコンソールに出力
         return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
-
+@login_required
 @csrf_exempt
 def history_shift_register(request):
     if request.method == 'POST':
@@ -1965,6 +2002,28 @@ def history_shift_register(request):
             staff_profile = getattr(request.user, 'staff_profile', None)
             if not staff_profile:
                 return JsonResponse({'success': False, 'error': 'スタッフプロファイルが見つかりません'}, status=400)
+
+            # === 追加: 時間バリデーション ===
+            if endtime <= starttime:
+                return JsonResponse({'success': False, 'error': '終了時間は開始時間より後にしてください'}, status=400)
+
+            # === 追加: 休みが入ってる日は予定追加禁止 ===
+            has_holiday = ShiftPreference.objects.filter(
+                staff=staff_profile,
+                date=date,
+                holiday__isnull=False
+            ).exists()
+            if has_holiday:
+                return JsonResponse({'success': False, 'error': '休みが入っている日は予定を追加できません'}, status=400)
+
+            # === 追加: 1日2件まで ===
+            shift_count = ShiftPreference.objects.filter(
+                staff=staff_profile,
+                date=date,
+                holiday__isnull=True
+            ).count()
+            if shift_count >= 2:
+                return JsonResponse({'success': False, 'error': '1日に登録できる予定は最大2つまでです'}, status=400)
 
             # シフトの登録
             new_shift = ShiftPreference.objects.create(
