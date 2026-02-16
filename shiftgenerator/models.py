@@ -240,6 +240,13 @@ class ShiftSubmissionPeriod(models.Model):
     
     
 class ShiftSubmission(models.Model):
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['staff', 'period'],
+                name='uniq_submission_staff_period'
+            )
+        ]
     staff = models.ForeignKey(Staff, on_delete=models.CASCADE)
     period = models.ForeignKey(ShiftSubmissionPeriod, on_delete=models.CASCADE)
     # ShiftPreferenceは複数なのでM2MでもOK。まずは提出レコードとして1:多で設計

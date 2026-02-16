@@ -1683,10 +1683,7 @@ def submit_shift(request):
                 'holiday_id': pref.holiday_id,
             })
 
-        prev_submission = (
-            ShiftSubmission.objects.filter(staff=staff_profile, period=period)
-            .order_by('-updated_at').first()
-        )
+        prev_submission = ShiftSubmission.objects.filter(staff=staff_profile, period=period).first()
         
         if not shift_qs.exists():
             return JsonResponse({
@@ -1703,15 +1700,26 @@ def submit_shift(request):
                     'message': '前回提出内容と全く同じです。'
                 })
 
-        status = "再提出" if prev_submission else "初回"
         comment = request.POST.get("period_comment", "")
-        ShiftSubmission.objects.create(
-            staff=staff_profile,
-            period=period,
-            comment=comment,
-            submission_status=status,
-            snapshot=current_prefs  # ← すべて文字列なのでJSONでOK！
-        )
+
+        if prev_submission:
+            # 既存がある → 更新（再提出）
+            prev_submission.comment = comment
+            prev_submission.submission_status = "再提出"
+            prev_submission.snapshot = current_prefs
+            prev_submission.save(update_fields=["comment", "submission_status", "snapshot", "updated_at"])
+            status = "再提出"
+        else:
+            # 既存がない → 作成（初回）
+            ShiftSubmission.objects.create(
+                staff=staff_profile,
+                period=period,
+                comment=comment,
+                submission_status="初回",
+                snapshot=current_prefs
+            )
+            status = "初回"
+
         return JsonResponse({
             'success': True,
             'period_label': period.label,
