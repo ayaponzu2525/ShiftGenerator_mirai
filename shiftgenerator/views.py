@@ -1746,15 +1746,42 @@ def shift_detail(request, shift_id):
         'holiday_name': holiday_name,
     })
 
+def touch_shift_history(staff_profile, starttime, endtime, limit=10):
+    """
+    (starttime, endtime) を「最近使った」にする。
+    既存なら updated_at を今に更新、なければ作成。
+    ついでに limit 超えたら「一番古い(=使われてない)」のを削除。
+    """
+    obj, created = ShiftHistory.objects.get_or_create(
+        staff=staff_profile,
+        starttime=starttime,
+        endtime=endtime,
+    )
+
+    if not created:
+        # auto_now は save() の時に更新されるけど、
+        # 値が変わらないと save しない実装になりがちなので明示 update
+        ShiftHistory.objects.filter(pk=obj.pk).update(updated_at=timezone.now())
+
+    # limit 超えたら「updated_at が古い」ものから消す
+    qs = ShiftHistory.objects.filter(staff=staff_profile).order_by('updated_at', 'created_at')
+    if qs.count() > limit:
+        qs.first().delete()
+        
 # シフト履歴を取得するAPI
 def get_shift_history(request):
-    # 現在のユーザーのシフト履歴を取得
-    histories = ShiftHistory.objects.filter(staff=request.user.staff_profile).order_by('-created_at')[:10]
-    
-    # シフト履歴をJSON形式に変換
+    staff_profile = request.user.staff_profile
+
+    histories = (
+        ShiftHistory.objects
+        .filter(staff=staff_profile)
+        .order_by('-updated_at', '-created_at')[:10]
+    )
+
     history_list = list(histories.values('starttime', 'endtime'))
-    
+
     return JsonResponse(history_list, safe=False)
+
 
 def register(request):
     if request.method == 'POST':
@@ -1971,13 +1998,8 @@ def new_register_shift(request):
             day_of_week=day_of_week_instance
         )
 
-        # ShiftHistory（既存ロジック維持）
-        if ShiftHistory.objects.filter(staff=staff_profile, starttime=starttime, endtime=endtime).count() == 0:
-            ShiftHistory.objects.create(staff=staff_profile, starttime=starttime, endtime=endtime)
-
-        if ShiftHistory.objects.filter(staff=staff_profile).count() > 10:
-            oldest_history = ShiftHistory.objects.filter(staff=staff_profile).earliest('created_at')
-            oldest_history.delete()
+        # ShiftHistoryの更新（ついでに）
+        touch_shift_history(staff_profile, starttime, endtime)
 
         if is_json:
             return JsonResponse({'success': True})
@@ -2120,6 +2142,7 @@ def history_shift_register(request):
                 date=date,
                 day_of_week=day_of_week_instance
             )
+            touch_shift_history(staff_profile, starttime, endtime)
             
              # 登録したシフトの更新時刻を取得
             last_update = new_shift.updated_at.isoformat()  # updated_atをISOフォーマットで取得
