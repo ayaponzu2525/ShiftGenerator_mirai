@@ -1309,7 +1309,11 @@ function _validateAddHoliday(dateStr) {
                 $('#noChangeModal').modal('show');
                 $('#periodComment').val('');
             } else {
+            if (data.validation_errors && data.validation_errors.length) {
+                alert((data.error || '提出に失敗しました') + "\n\n" + data.validation_errors.join("\n"));
+            } else {
                 alert(data.error || '提出に失敗しました');
+            }
             }
             },
             error: function() {

@@ -1590,8 +1590,67 @@ def submit_shift(request):
         shift_qs = ShiftPreference.objects.filter(
             staff=staff_profile,
             date__range=(period.start_date, period.end_date)
+        ).filter(
+            Q(holiday__isnull=False) | (Q(starttime__isnull=False) & Q(endtime__isnull=False))
         ).order_by('date', 'starttime', 'endtime', 'holiday_id')
-        
+                
+        from collections import defaultdict
+
+        def _validate_shift_prefs_for_submit(shift_qs):
+            errors = []
+            by_date = defaultdict(list)
+
+            for pref in shift_qs:
+                by_date[pref.date].append(pref)
+
+            for d, items in sorted(by_date.items(), key=lambda x: x[0]):
+                holidays = [x for x in items if x.holiday_id is not None]
+                normals = [x for x in items if x.holiday_id is None]  # ← この時点で start/end は必ず両方ある想定
+
+                d_str = d.strftime('%Y-%m-%d')
+
+                if len(holidays) >= 2:
+                    errors.append(f"{d_str}：休みが複数登録されています（{len(holidays)}件）")
+
+                if holidays and normals:
+                    errors.append(f"{d_str}：休みと予定が同日に登録されています（どちらか削除してください）")
+
+                if len(normals) > 2:
+                    errors.append(f"{d_str}：予定が{len(normals)}件あります（最大2件まで）")
+
+                normals_sorted = sorted(normals, key=lambda x: (x.starttime, x.endtime))
+
+                # 時刻逆転（最終防衛）
+                for x in normals_sorted:
+                    if x.endtime <= x.starttime:
+                        errors.append(f"{d_str}：開始/終了時刻が不正です（{x.starttime.strftime('%H:%M')}〜{x.endtime.strftime('%H:%M')}）")
+
+                # 重なりチェック（1回だけ）
+                prev = None
+                for x in normals_sorted:
+                    if prev and prev.endtime > x.starttime:
+                        errors.append(
+                            f"{d_str}：予定が重なっています（{prev.starttime.strftime('%H:%M')}〜{prev.endtime.strftime('%H:%M')} と "
+                            f"{x.starttime.strftime('%H:%M')}〜{x.endtime.strftime('%H:%M')}）"
+                        )
+                    prev = x
+
+            return errors
+
+
+        # ★締切チェック（念のため）
+        if period.auto_close_date and timezone.now() > period.auto_close_date:
+            return JsonResponse({'success': False, 'error': '提出期限を過ぎています。'}, status=200)
+
+        # ★提出時の最終整合チェック（詳細つき）
+        validation_errors = _validate_shift_prefs_for_submit(shift_qs)
+        if validation_errors:
+            return JsonResponse({
+                'success': False,
+                'error': '提出内容に不備があります。下記を修正してください。',
+                'validation_errors': validation_errors
+            }, status=200)
+
         current_prefs = []
         for pref in shift_qs:
             current_prefs.append({
@@ -1607,6 +1666,13 @@ def submit_shift(request):
             ShiftSubmission.objects.filter(staff=staff_profile, period=period)
             .order_by('-updated_at').first()
         )
+        
+        if not shift_qs.exists():
+            return JsonResponse({
+                'success': False,
+                'error': '提出期間内に希望が1件もありません。'
+            }, status=200)
+
         if prev_submission and prev_submission.snapshot:
             if current_prefs == prev_submission.snapshot:
                 # 完全一致なら「変更なし」
