@@ -1495,6 +1495,26 @@ def shift_form(request):
     # 受付中の期間リスト取得
     active_periods = ShiftSubmissionPeriod.objects.filter(is_active=True).order_by('start_date')
 
+    # 日付の初期位置
+    today = localdate()
+    # 受付中の募集期間（デフォルトだけを優先）
+    default_active_qs = ShiftSubmissionPeriod.objects.filter(
+        is_active=True,
+        type="default",
+    ).order_by("created_at", "id")  # created_at が同値でも安定するように id も
+
+    default_active = default_active_qs.first()
+
+    if default_active:
+        initial_date = default_active.start_date
+    else:
+        # 半月ロジック
+        if today.day <= 15:
+            initial_date = date(today.year, today.month, 16)
+        else:
+            next_month = today.month + 1 if today.month < 12 else 1
+            next_year = today.year if today.month < 12 else today.year + 1
+            initial_date = date(next_year, next_month, 1)
     # データをJSON形式に変換
     events = []
     
@@ -1568,7 +1588,8 @@ def shift_form(request):
         'events': events_json,
         'name': staff_profile.name,
         'username': user.username,
-        'history': history_json if history_list else None
+        'history': history_json if history_list else None,
+        'initial_date': initial_date.isoformat(),
     }
     
     return render(request, 'shiftgenerator/shift_form.html', context)

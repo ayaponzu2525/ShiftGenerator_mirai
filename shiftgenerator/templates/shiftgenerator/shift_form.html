@@ -813,6 +813,7 @@ function rerenderAllDayDecorations() {
 
   window.calendar = new FullCalendar.Calendar(calendarEl, {
     initialView: 'dayGridMonth',
+    initialDate: ("{{ initial_date|default:'' }}") || undefined,
     locale: 'ja',
     timeZone: 'Asia/Tokyo',
 
@@ -831,16 +832,10 @@ function rerenderAllDayDecorations() {
         const end   = info.endStr.slice(0,10);
         const res = await fetch(`/api/shift-events/?start=${start}&end=${end}`);
         cachedEvents = await res.json();
-        // ログ学校関連
-        const s = cachedEvents.find(e => (e.title||"").includes("学校"));
-        console.log("school event from API", s);
-        buildDayTypeMap(cachedEvents);
-        console.log("dayTypeMap for school day", s?.start?.slice(0,10), dayTypeMap.get(s?.start?.slice(0,10)));
 
         window.__cachedEvents = cachedEvents;
-
         buildDayTypeMap(cachedEvents);
-
+        
         window.calendar.removeAllEvents();
         window.calendar.addEventSource(cachedEvents);
 
