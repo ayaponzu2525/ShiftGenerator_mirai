@@ -1,4 +1,5 @@
-from django.http import HttpResponse, JsonResponse, HttpResponseServerError
+from django.http import HttpResponse, JsonResponse, HttpResponseServerError, HttpResponseRedirect
+from django.urls import reverse
 from django.views.decorators.csrf import csrf_exempt
 from django.db import transaction
 from django.conf import settings
@@ -980,6 +981,7 @@ def shift_management_view(request):
     period_id = request.GET.get("period_id")
     if period_id:
         selected_period = get_object_or_404(ShiftSubmissionPeriod, id=period_id)
+        print("SELECTED:", selected_period.id, selected_period.is_active)
         for s in staff_list:
             sub = (
                 ShiftSubmission.objects
@@ -1006,10 +1008,6 @@ def shift_management_view(request):
         
         if type_ == "HELP":
             label = make_help_label(start_date, start_time, end_time)
-
-        if has_duplicate_period(type_, start_date, end_date, start_time, end_time):
-            messages.error(request, "重複している募集期間がすでに存在します。")
-            return redirect("shiftgenerator:shift-management-view")
         
         if not start_date or not end_date:
             messages.error(request, "開始日と終了日は必須です。")
@@ -1022,7 +1020,11 @@ def shift_management_view(request):
         if start_time and end_time and end_time <= start_time:
             messages.error(request, "終了時刻は開始時刻より後にしてください。")
             return redirect("shiftgenerator:shift-management-view")
-
+        
+        # ✅ デフォルトの時だけ重複チェック
+        if type_ == "default" and has_duplicate_period(type_, start_date, end_date, start_time, end_time):
+            url = reverse("shiftgenerator:shift-management-view")
+            return redirect(f"{url}?open=create&dup=1")
 
         ShiftSubmissionPeriod.objects.create(
             label=label,
@@ -1050,7 +1052,15 @@ def shift_management_view(request):
     submitted_staff = len(submissions)
     submission_rate = (submitted_staff / total_staff) * 100 if total_staff > 0 else 0
     unsubmitted_staff = [s for s in staff_list if s.id not in submissions]
-    all_periods = ShiftSubmissionPeriod.objects.all().order_by('-start_date')
+    # select表示用（受付中＋終了済み直近10件）
+    active_periods_select = ShiftSubmissionPeriod.objects.filter(is_active=True).order_by('-start_date')
+    recent_inactive_select = ShiftSubmissionPeriod.objects.filter(is_active=False).order_by('-start_date')[:5]
+
+    select_periods = list(active_periods_select) + list(recent_inactive_select)
+
+    # 「選択中が古すぎてリストにいない」問題の保険
+    if selected_period and selected_period not in select_periods:
+        select_periods = [selected_period] + select_periods
 
     # ❽ テンプレートへ渡す
     return render(request, "shiftgenerator/shift_management_view.html", {
@@ -1068,7 +1078,7 @@ def shift_management_view(request):
         "submission_rate": submission_rate,
         "unsubmitted_staff": unsubmitted_staff,
 
-        "all_periods": all_periods,
+        "select_periods": select_periods,
         "latest_period": latest_period,
         "latest_pattern": latest_pattern,
     })
@@ -1122,13 +1132,26 @@ def shift_period_delete(request, period_id):
 @user_passes_test(lambda u: u.is_superuser)
 def shift_period_reopen(request, period_id):
     period = get_object_or_404(ShiftSubmissionPeriod, id=period_id)
-    auto_close = request.POST.get("auto_close_date")
+
+    auto_close = request.POST.get("auto_close_date")  # 任意入力
     period.is_active = True
-    if auto_close:                 # 空ならそのまま
-        period.auto_close_date = parse_datetime(auto_close)
+
+    if auto_close:
+        dt = parse_datetime(auto_close)
+        if dt and timezone.is_naive(dt):
+            dt = timezone.make_aware(dt, timezone.get_current_timezone())
+        if dt:
+            period.auto_close_date = dt
+    else:
+        # ★入力が無い場合：
+        #   期限切れの auto_close_date が残ってると即停止されるのでクリアする
+        if period.auto_close_date and period.auto_close_date <= timezone.now():
+            period.auto_close_date = None
+
     period.save()
     messages.success(request, "募集期間を再開しました。")
-    return redirect('shiftgenerator:shift-management-view')
+
+    return redirect(f"{reverse('shiftgenerator:shift-management-view')}?period_id={period.id}")
 
 
 

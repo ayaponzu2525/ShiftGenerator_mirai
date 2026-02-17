@@ -30,6 +30,22 @@
 </head>
 <body class="bg-light">
   {% load shift_tags %}
+  <!-- ✅ Django messages 表示 -->
+  <div class="container mt-3">
+    {% if messages %}
+      {% for message in messages %}
+        <div class="alert
+                    {% if message.tags %}alert-{{ message.tags }}{% else %}alert-info{% endif %}
+                    alert-dismissible fade show"
+             role="alert">
+          {{ message }}
+          <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+            <span aria-hidden="true">&times;</span>
+          </button>
+        </div>
+      {% endfor %}
+    {% endif %}
+  </div>
 
 <!-- ▽ 提出期間管理エリア ▽ -->
 <div class="card mb-4">
@@ -123,17 +139,8 @@
         <div class="text-muted">※ 期間を指定してください。</div>
       {% else %}
         {% for period in inactive_periods %}
-          <button   class="btn btn-outline-secondary btn-sm mb-1 mr-1"
-                    data-toggle="modal"
-                    data-target="#editPeriodModal"
-                    data-id="{{ period.id }}"
-                    data-type="{{ period.type }}"
-                    data-is_active="{{ period.is_active|yesno:'1,0' }}"
-                    data-start="{{ period.start_date|date:'Y-m-d' }}"
-                    data-end="{{ period.end_date|date:'Y-m-d' }}"
-                    data-start-time="{{ period.start_time|default_if_none:'' }}"
-                    data-end-time="{{ period.end_time|default_if_none:'' }}"
-                    data-auto-close="{{ period.auto_close_date|default_if_none:''|date:'Y-m-d\\TH:i' }}">
+          <a class="btn btn-outline-secondary btn-sm mb-1 mr-1"
+            href="?period_id={{ period.id }}&show_past=1{% if past_from %}&past_from={{ past_from }}{% endif %}{% if past_to %}&past_to={{ past_to }}{% endif %}">
             {% if period.type == 'HELP' %}
               [{{ period.get_type_display }}]
               {{ period.start_date|date:"Y年m月d日" }}：
@@ -143,7 +150,7 @@
               {{ period.start_date|date:"Y年m月d日" }}～
               {{ period.end_date|date:"m月d日" }}
             {% endif %}
-          </button>
+          </a>
           {% empty %}
             <span class="text-muted">該当期間はありません</span>
         {% endfor %}
@@ -293,10 +300,6 @@
                 </div>
               </div>
             </div>
-
-
-            
-
         </div>
         <div class="modal-footer">
           <button type="submit" class="btn btn-primary">作成</button>
@@ -313,15 +316,69 @@
   <div class="card-body">
     <form method="get" class="form-inline mb-2">
         <select name="period_id" class="form-control mr-2" onchange="this.form.submit()">
-          {% for period in all_periods %}
-            <option value="{{ period.id }}" {% if period.id|stringformat:"s" == request.GET.period_id %}selected{% endif %}>
-              {% if period.type == "default" %}[通常]{% elif period.type == "temporary" %}[臨時]{% elif period.type == "HELP" %}[HELP]{% endif %} {{ period.label }}
-            </option>
-          {% endfor %}
+
+          <optgroup label="受付中">
+            {% for period in select_periods %}
+              {% if period.is_active %}
+                <option value="{{ period.id }}" {% if period.id|stringformat:"s" == request.GET.period_id %}selected{% endif %}>
+                  {% if period.type == "default" %}[通常]{% elif period.type == "temporary" %}[臨時]{% elif period.type == "HELP" %}[HELP]{% endif %}
+                  {{ period.label }}
+                </option>
+              {% endif %}
+            {% endfor %}
+          </optgroup>
+
+          <optgroup label="最近終了（直近5件）">
+            {% for period in select_periods %}
+              {% if not period.is_active %}
+                <option value="{{ period.id }}" {% if period.id|stringformat:"s" == request.GET.period_id %}selected{% endif %}>
+                  {% if period.type == "default" %}[通常]{% elif period.type == "temporary" %}[臨時]{% elif period.type == "HELP" %}[HELP]{% endif %}
+                  {{ period.label }}
+                </option>
+              {% endif %}
+            {% endfor %}
+          </optgroup>
+
         </select>
     </form>
+    <a class="btn btn-outline-secondary btn-sm"
+      href="?show_past=1&past_from={{ past_from|default_if_none:'' }}&past_to={{ past_to|default_if_none:'' }}">
+      過去を探す
+    </a>
 
-    {% if selected_period %}
+    {% if selected_period and not selected_period.is_active %}
+      <div class="alert alert-warning d-flex justify-content-between align-items-center">
+        <div>
+          <strong>この募集期間は停止中です。</strong>
+          再開する場合は右のボタンを押してください。
+        </div>
+
+        <form method="post"
+              action="{% url 'shiftgenerator:shift-period-reopen' selected_period.id %}"
+              class="mb-0 d-flex align-items-center">
+          {% csrf_token %}
+          自動締め切り日時（空欄＝自動締切なし）：
+          <input type="datetime-local"
+                name="auto_close_date"
+                class="form-control form-control-sm"
+                style="width: 220px; margin-right: 14px;">
+
+          <button type="submit" class="btn btn-success btn-sm">再開</button>
+        </form>
+
+         <!-- ✅ 追加：削除（再開の下） -->
+        <form method="post" action="/shift-period-delete/{{ selected_period.id }}/" class="d-block mt-2">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-sm btn-outline-danger"
+                  onclick="return confirm('本当に削除しますか？');">
+            削除
+          </button>
+        </form>
+      </div>
+    {% endif %}
+
+
+
     <table class="table table-bordered w-100 mb-3">
       <thead class="thead-light">
         <tr>
@@ -341,7 +398,31 @@
       </tbody>
     </table>
 
-      <table class="table table-bordered">
+    <div class="d-flex flex-wrap align-items-center mb-2" style="gap:8px;">
+      <input id="subSearch" type="text" class="form-control form-control-sm" style="width:220px;"
+            placeholder="スタッフ名で検索">
+
+      <div class="btn-group btn-group-sm" role="group" aria-label="filter">
+        <button type="button" class="btn btn-outline-secondary active" data-filter="all">全員</button>
+        <button type="button" class="btn btn-outline-secondary" data-filter="未提出">未提出</button>
+        <button type="button" class="btn btn-outline-secondary" data-filter="submitted">提出済</button>
+        <button type="button" class="btn btn-outline-secondary" data-filter="再提出">再提出</button>
+      </div>
+
+      <div class="btn-group btn-group-sm" role="group" aria-label="sort">
+        <button type="button" class="btn btn-outline-secondary" id="sortName">名前順</button>
+        <button type="button" class="btn btn-outline-secondary" id="sortUpdatedDesc">提出日時↓</button>
+        <button type="button" class="btn btn-outline-secondary" id="sortUpdatedAsc">提出日時↑</button>
+      </div>
+
+      <button type="button" class="btn btn-outline-primary btn-sm" id="copyUnsubmitted">
+        未提出者の名前をコピー
+      </button>
+
+      <span class="text-muted small" id="subCount"></span>
+    </div>
+
+      <table class="table table-bordered" id="submissionTable">
         <thead>
           <tr>
             <th>スタッフ名</th>
@@ -351,9 +432,12 @@
           </tr>
         </thead>
         <tbody>
-          {% for staff in staff_list %}
-            {% with submission=submissions|get_item:staff.id %}
-            <tr>
+        {% for staff in staff_list %}
+          {% with submission=submissions|get_item:staff.id %}
+          <tr class="sub-row"
+              data-name="{{ staff.name|lower }}"
+              data-state="{% if submission %}{{ submission.submission_status }}{% else %}未提出{% endif %}"
+              data-updated="{% if submission %}{{ submission.updated_at|date:'U' }}{% else %}0{% endif %}">
               <td>{{ staff.name }}</td>
               <td>
                 {% if submission %}
@@ -377,7 +461,6 @@
           {% endfor %}
         </tbody>
       </table>
-    {% endif %}
   </div>
 </div>
 
@@ -645,7 +728,124 @@ $('#createPeriodModal').on('show.bs.modal', function () {
 
 });
 
+(function(){
+  const table = document.getElementById('submissionTable');
+  if (!table) return;
 
+  const tbody = table.querySelector('tbody');
+  const rows  = Array.from(tbody.querySelectorAll('tr.sub-row'));
+
+  const search = document.getElementById('subSearch');
+  const filterBtns = Array.from(document.querySelectorAll('[data-filter]'));
+  const copyBtn = document.getElementById('copyUnsubmitted');
+  const countEl = document.getElementById('subCount');
+
+  const sortNameBtn = document.getElementById('sortName');
+  const sortDescBtn = document.getElementById('sortUpdatedDesc');
+  const sortAscBtn  = document.getElementById('sortUpdatedAsc');
+
+  let currentFilter = 'all';
+
+  function isSubmittedState(state){
+    return state && state !== '未提出';
+  }
+
+  function apply(){
+    const q = (search?.value || '').trim().toLowerCase();
+
+    let visible = 0;
+    for (const tr of rows){
+      const name  = tr.dataset.name || '';
+      const state = tr.dataset.state || '未提出';
+
+      // 検索
+      const hit = !q || name.includes(q);
+
+      // フィルタ
+      let ok = true;
+      if (currentFilter === '未提出') ok = (state === '未提出');
+      else if (currentFilter === '再提出') ok = (state === '再提出');
+      else if (currentFilter === 'submitted') ok = isSubmittedState(state);
+      // all は常にtrue
+
+      const show = hit && ok;
+      tr.style.display = show ? '' : 'none';
+      if (show) visible++;
+    }
+    if (countEl) countEl.textContent = `表示: ${visible} / ${rows.length}`;
+  }
+
+  function setActiveFilter(btn){
+    filterBtns.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  }
+
+  // フィルタボタン
+  filterBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      currentFilter = btn.dataset.filter;
+      setActiveFilter(btn);
+      apply();
+    });
+  });
+
+  // 検索
+  if (search){
+    search.addEventListener('input', apply);
+  }
+
+  // ソート
+  function sortBy(fn){
+    const sorted = rows.slice().sort(fn);
+    for (const tr of sorted) tbody.appendChild(tr);
+    // rows自体の順番も更新
+    rows.length = 0;
+    rows.push(...sorted);
+    apply();
+  }
+
+  if (sortNameBtn){
+    sortNameBtn.addEventListener('click', () => {
+      sortBy((a,b) => (a.dataset.name || '').localeCompare(b.dataset.name || '', 'ja'));
+    });
+  }
+  if (sortDescBtn){
+    sortDescBtn.addEventListener('click', () => {
+      sortBy((a,b) => (parseInt(b.dataset.updated||'0',10) - parseInt(a.dataset.updated||'0',10)));
+    });
+  }
+  if (sortAscBtn){
+    sortAscBtn.addEventListener('click', () => {
+      sortBy((a,b) => (parseInt(a.dataset.updated||'0',10) - parseInt(b.dataset.updated||'0',10)));
+    });
+  }
+
+  // 未提出者コピー
+  if (copyBtn){
+    copyBtn.addEventListener('click', async () => {
+      const names = rows
+        .filter(tr => (tr.dataset.state || '未提出') === '未提出')
+        .map(tr => tr.querySelector('td')?.innerText?.trim())
+        .filter(Boolean);
+
+      const text = names.join('、');
+      if (!text){
+        alert('未提出者はいません。');
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(text);
+        alert(`未提出者をコピーしました：\n${text}`);
+      } catch (e) {
+        // clipboard使えない場合のフォールバック
+        window.prompt('コピーできない環境です。手動でコピーしてください：', text);
+      }
+    });
+  }
+
+  // 初期適用
+  apply();
+})();
 
 
 function updatePeriodModalUI(modal, mode) {
@@ -679,10 +879,31 @@ function updatePeriodModalUI(modal, mode) {
 
 
   // 共通のクリアイベント登録（作成・編集どちらでも適用）
-  $('.clearAutoCloseBtn').off('click').on('click', function() {
-    $(this).closest('.input-group').find('input[type="datetime-local"]').val('');
-  });
+    $('.clearAutoCloseBtn').off('click').on('click', function() {
+      $(this).closest('.input-group').find('input[type="datetime-local"]').val('');
+    });
 
+    // URLパラメータ open=create で新規作成モーダルを自動オープン ＋ 重複通知
+    $(function(){
+    const params = new URLSearchParams(window.location.search);
+
+    if (params.get('open') === 'create') {
+      $('#createPeriodModal').modal('show');
+    }
+
+    if (params.get('dup') === '1') {
+      // 🔥 先にURLをクリーンにする（大事）
+      params.delete('dup');
+      params.delete('open');
+      const q = params.toString();
+      history.replaceState(null, "", window.location.pathname + (q ? "?" + q : ""));
+
+      // ✅ 通知だけ
+      setTimeout(() => {
+        alert("重複している募集期間がすでに存在します。\n作成はできません。");
+      }, 0);
+    }
+  });
 
 
   // ===== ダウンロードボタン =====
