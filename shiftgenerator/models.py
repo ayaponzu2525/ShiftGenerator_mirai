@@ -162,6 +162,11 @@ class ShiftPreference(models.Model):
     endtime = models.TimeField(null=True, blank=True)
     confirmed_starttime = models.TimeField(null=True, blank=True)  # 確定開始時刻
     confirmed_endtime = models.TimeField(null=True, blank=True)  # 確定終了時刻
+    
+    published_starttime = models.TimeField(null=True, blank=True) # 公開開始時刻
+    published_endtime   = models.TimeField(null=True, blank=True) # 公開終了時刻
+    published_at        = models.DateTimeField(null=True, blank=True) # 公開日時
+    
     day_of_week = models.ForeignKey(DayOfWeek, on_delete=models.CASCADE)  # DayOfWeek モデルとの関連付け
     holiday = models.ForeignKey(Holiday, on_delete=models.SET_NULL, null=True, blank=True)  # Holiday モデルとの関連付け
 

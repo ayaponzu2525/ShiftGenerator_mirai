@@ -81,19 +81,36 @@
                     <th>休みの名称</th>
                     <td>{{ holiday_name }}</td>
                 </tr>
+                {% if readonly %}
                 <tr>
-                    <th>説明</th>
-                    <td>{{ description }}</td>
+                <th>レジ</th>
+                <td>
+                    {% if registers and registers|length %}
+                    <ul class="list-unstyled mb-0">
+                        {% for r in registers %}
+                        <li>
+                            {{ r.register_number }}レジ
+                            {{ r.register_start_time|time:"H:i" }}-{{ r.register_end_time|time:"H:i" }}
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    {% else %}
+                    --
+                    {% endif %}
+                </td>
                 </tr>
+                {% endif %}
             </tbody>
         </table>
             <div class="d-flex justify-content-center mt-4">
+                {% if not readonly %}
                 <form method="post" action="{% url 'shiftgenerator:shift-detail' shift.id %}">
                     {% csrf_token %}
-                    <button type="submit" class="btn btn-primary">
-                        削除
-                    </button>
+                    <button type="submit" class="btn btn-primary">削除</button>
                 </form>
+                {% else %}
+                <div class="alert alert-info mb-0">この画面は確定シフトの閲覧専用です。</div>
+                {% endif %}
                 <a href="{% url 'shiftgenerator:shift-form' %}" class="btn btn-secondary ml-2">
                     <i class="fas fa-arrow-left" style="vertical-align: middle;"></i> シフト希望カレンダーに戻る
                 </a>

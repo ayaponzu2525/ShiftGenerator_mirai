@@ -310,6 +310,17 @@
   </div>
 </div>
 
+{% if selected_period %}
+  <form method="post" action="{% url 'shiftgenerator:shift-period-publish' selected_period.id %}"
+        onsubmit="return confirm('この募集期間の確定シフトをスタッフに公開しますか？');"
+        class="d-inline">
+    {% csrf_token %}
+    <button class="btn btn-success btn-sm">
+      この募集期間を公開（確定→公開）
+    </button>
+  </form>
+{% endif %}
+
 
 <div class="card mb-4">
   <div class="card-header"><strong>提出状況集計</strong></div>

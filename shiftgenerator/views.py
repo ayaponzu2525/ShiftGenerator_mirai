@@ -1,4 +1,4 @@
-from django.http import HttpResponse, JsonResponse, HttpResponseServerError, HttpResponseRedirect
+from django.http import HttpResponse, JsonResponse, HttpResponseServerError, HttpResponseRedirect, HttpResponseForbidden, HttpResponseNotAllowed
 from django.urls import reverse
 from django.views.decorators.csrf import csrf_exempt
 from django.db import transaction
@@ -28,7 +28,7 @@ from .forms import CustomUserCreationForm, ShiftPreferenceForm, ExcelTemplateUpl
 from .models import ShiftPreference, Staff, DayOfWeek, ShiftRegisterAssignment, ShiftHistory, Holiday, Skill, StaffSkill, ShiftSubmissionPeriod, ShiftSubmission, ExcelExportTemplate
 from django.contrib.auth.hashers import make_password
 from django.contrib import messages
-from django.db.models import Exists, OuterRef, Q
+from django.db.models import Exists, OuterRef, Q, F, Prefetch
 from shiftgenerator.utils.utils import close_expired_periods
 import openpyxl
 from openpyxl.styles import PatternFill
@@ -1153,7 +1153,108 @@ def shift_period_reopen(request, period_id):
 
     return redirect(f"{reverse('shiftgenerator:shift-management-view')}?period_id={period.id}")
 
+@require_POST
+@user_passes_test(lambda u: u.is_superuser)
+def shift_period_publish(request, period_id):
+    """
+    募集期間内の active スタッフ分だけ、
+    confirmed_* -> published_* にコピーして公開する
+    """
+    period = get_object_or_404(ShiftSubmissionPeriod, id=period_id)
 
+    qs = ShiftPreference.objects.filter(
+        date__range=(period.start_date, period.end_date),
+        staff__is_active=True,
+    )
+
+    now = timezone.now()
+    updated = qs.update(
+        published_starttime=F('confirmed_starttime'),
+        published_endtime=F('confirmed_endtime'),
+        published_at=now,
+    )
+
+    messages.success(request, f"公開しました（対象レコード: {updated} 件）")
+    # 公開後も同じperiodを表示状態で戻す
+    return redirect(f"{reverse('shiftgenerator:shift-management-view')}?period_id={period.id}")
+
+@login_required
+def published_shift_events_api(request):
+    user = request.user
+    staff_profile = getattr(user, 'staff_profile', None)
+    if not staff_profile:
+        return JsonResponse({'error': 'no staff'}, status=403)
+
+    start = parse_date(request.GET.get('start'))
+    end = parse_date(request.GET.get('end'))
+    if not start or not end:
+        return JsonResponse({'error': 'start/end required'}, status=400)
+
+    qs = (ShiftPreference.objects
+          .filter(staff=staff_profile, date__gte=start, date__lt=end)
+          .prefetch_related('register_assignments'))
+
+    events = []
+    for shift in qs:
+        # 休み表示は「希望と同じロジック」でOK（そのまま見せる）
+        if shift.holiday:
+            # shift_events_api と同じ色/タイプ付けに合わせるのが安全
+            if shift.holiday.id == 1:
+                t, color = "off", "#ff3d3d"
+            elif shift.holiday.id == 2:
+                t, color = "school", "#12a8b3"
+            elif shift.holiday.id == 3:
+                t, color = "pending", "#ede100"
+            else:
+                t, color = "off", "#ff3d3d"
+
+            events.append({
+                "id": str(shift.id),
+                "title": shift.holiday.holiday_name,
+                "start": shift.date.isoformat() + "T00:00:00",
+                "end": shift.date.isoformat() + "T23:59:59",
+                "display": "block",
+                "extendedProps": {
+                    "type": t,
+                    "holiday": True,
+                    # PC装飾で使ってるなら合わせる
+                    "holidayColor": color,
+                }
+            })
+            continue
+
+        # 公開版（published_*）が入ってる日のみ“確定”として表示
+        if shift.published_starttime and shift.published_endtime:
+            regs = []
+            for r in shift.register_assignments.all().order_by('register_start_time', 'register_end_time', 'register_number'):
+                if r.register_start_time and r.register_end_time:
+                    regs.append({
+                        "register_number": r.register_number,
+                        "register_start_time": r.register_start_time.strftime("%H:%M"),
+                        "register_end_time": r.register_end_time.strftime("%H:%M"),
+                    })
+
+            published_at = shift.published_at.isoformat() if shift.published_at else None
+            # 「調整中」判定：ドラフト更新が公開より新しい
+            is_adjusting = bool(shift.published_at and shift.updated_at and shift.updated_at > shift.published_at)
+
+            events.append({
+                "id": str(shift.id),
+                "title": f'{shift.published_starttime.strftime("%H:%M")} - {shift.published_endtime.strftime("%H:%M")}',
+                "start": f'{shift.date}T{shift.published_starttime.strftime("%H:%M:%S")}',
+                "end": f'{shift.date}T{shift.published_endtime.strftime("%H:%M:%S")}',
+                "extendedProps": {
+                    "type": "shift",          # 既存のUI処理に乗せる（スマホの判定もこれ）
+                    "holiday": False,
+                    "starttime": shift.published_starttime.strftime("%H:%M"),
+                    "endtime": shift.published_endtime.strftime("%H:%M"),
+                    "registers": regs,
+                    "published_at": published_at,
+                    "is_adjusting": is_adjusting,
+                }
+            })
+
+    return JsonResponse(events, safe=False)
 
 @require_POST
 @user_passes_test(lambda u: u.is_superuser)
@@ -1482,7 +1583,7 @@ def shift_events_api(request):
                 "extendedProps": {
                     "type": t,
                     "holiday": True,
-                    "markerColor": color,
+                    "holidayColor": color,
                 }
             })
         elif shift.starttime and shift.endtime:
@@ -1757,24 +1858,40 @@ def shift_detail(request, shift_id):
     try:
         shift = ShiftPreference.objects.get(id=shift_id, staff=request.user.staff_profile)
     except ShiftPreference.DoesNotExist:
-        return redirect('shiftgenerator:shift-form')  # シフトが存在しない場合のリダイレクト
+        return redirect('shiftgenerator:shift-form')
 
-    # Noneの値を'--'に置き換え
+    readonly = request.GET.get('readonly') == '1'
+
+    # ✅ readonly中は削除させない（URL直叩き対策）
+    if readonly and request.method == 'POST':
+        return HttpResponseNotAllowed(['GET'])
+
     shift_starttime = shift.starttime.strftime("%H:%M") if shift.starttime else '--'
-    shift_endtime = shift.endtime.strftime("%H:%M") if shift.endtime else '--'
-    holiday_name = shift.holiday.holiday_name if shift.holiday else '--'
+    shift_endtime   = shift.endtime.strftime("%H:%M") if shift.endtime else '--'
+    holiday_name    = shift.holiday.holiday_name if shift.holiday else '--'
+
+    registers = []
+    if readonly:
+        # ✅確定（公開）閲覧のときだけレジを表示したい
+        from .models import ShiftRegisterAssignment
+        registers = (
+            ShiftRegisterAssignment.objects
+            .filter(shift=shift)
+            .order_by('register_number', 'register_start_time')
+        )
 
     if request.method == 'POST':
-        # シフトを削除
         shift.delete()
         messages.success(request, 'シフトが正常に削除されました。')
-        return redirect('shiftgenerator:shift-form')  # シフトフォームページにリダイレクト
+        return redirect('shiftgenerator:shift-form')
 
     return render(request, 'shiftgenerator/shift_detail.html', {
         'shift': shift,
         'shift_starttime': shift_starttime,
         'shift_endtime': shift_endtime,
         'holiday_name': holiday_name,
+        'readonly': readonly,
+        'registers': registers,
     })
 
 def touch_shift_history(staff_profile, starttime, endtime, limit=10):
@@ -2232,7 +2349,6 @@ def get_update_events(request):
                 'extendedProps': {
                     'holiday': True,
                     'holidayColor': holiday_color,
-                    'markerColor': holiday_color,  # ★フロントが見るなら両方
                     'starttime': None,
                     'endtime': None,
                     'type': marker_type,           # ★ここ重要
@@ -2253,7 +2369,7 @@ def get_update_events(request):
                 }
             })
 
-    print(events)
+    # print(events)
 
 
     return JsonResponse({'success': True, 'events': events}, safe=False)
