@@ -111,7 +111,8 @@
                 {% else %}
                 <div class="alert alert-info mb-0">この画面は確定シフトの閲覧専用です。</div>
                 {% endif %}
-                <a href="{% url 'shiftgenerator:shift-form' %}" class="btn btn-secondary ml-2">
+                <a href="{% url 'shiftgenerator:shift-form' %}{% if readonly %}?confirmed=1{% endif %}"
+                class="btn btn-secondary ml-2">
                     <i class="fas fa-arrow-left" style="vertical-align: middle;"></i> シフト希望カレンダーに戻る
                 </a>
 

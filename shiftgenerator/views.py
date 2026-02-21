@@ -25,7 +25,7 @@ import csv
 from django.views.decorators.http import require_POST, require_GET
 
 from .forms import CustomUserCreationForm, ShiftPreferenceForm, ExcelTemplateUploadForm, StaffExcelCodeFormSet
-from .models import ShiftPreference, Staff, DayOfWeek, ShiftRegisterAssignment, ShiftHistory, Holiday, Skill, StaffSkill, ShiftSubmissionPeriod, ShiftSubmission, ExcelExportTemplate
+from .models import ShiftPreference, Staff, DayOfWeek, ShiftRegisterAssignment, ShiftHistory, Holiday, Skill, StaffSkill, ShiftSubmissionPeriod, ShiftSubmission, ExcelExportTemplate, PublishedRegisterAssignment
 from django.contrib.auth.hashers import make_password
 from django.contrib import messages
 from django.db.models import Exists, OuterRef, Q, F, Prefetch
@@ -809,9 +809,6 @@ def save_shift_and_registers(request):
         'versions': versions
     })
 
-
-
-
 @require_GET
 @user_passes_test(lambda u: u.is_superuser)
 def get_register_assignments(request):
@@ -1155,27 +1152,101 @@ def shift_period_reopen(request, period_id):
 
 @require_POST
 @user_passes_test(lambda u: u.is_superuser)
+@transaction.atomic
 def shift_period_publish(request, period_id):
-    """
-    募集期間内の active スタッフ分だけ、
-    confirmed_* -> published_* にコピーして公開する
-    """
     period = get_object_or_404(ShiftSubmissionPeriod, id=period_id)
 
-    qs = ShiftPreference.objects.filter(
-        date__range=(period.start_date, period.end_date),
-        staff__is_active=True,
+    qs = (
+        ShiftPreference.objects
+        .filter(
+            date__range=(period.start_date, period.end_date),
+            staff__is_active=True,
+        )
+        .prefetch_related('register_assignments', 'published_register_assignments')
     )
 
     now = timezone.now()
-    updated = qs.update(
-        published_starttime=F('confirmed_starttime'),
-        published_endtime=F('confirmed_endtime'),
-        published_at=now,
-    )
 
-    messages.success(request, f"公開しました（対象レコード: {updated} 件）")
-    # 公開後も同じperiodを表示状態で戻す
+    changed_shift_ids = set()
+    regs_rebuild_shift_ids = set()
+    bulk_regs = []
+
+    for shift in qs:
+        # --- ① 時刻の差分判定 ---
+        confirmed_s = shift.confirmed_starttime
+        confirmed_e = shift.confirmed_endtime
+        published_s = shift.published_starttime
+        published_e = shift.published_endtime
+
+        time_changed = (confirmed_s != published_s) or (confirmed_e != published_e)
+        if time_changed:
+            changed_shift_ids.add(shift.id)
+
+        # --- ② レジの差分判定（time型で比較） ---
+        confirmed_regs = set()
+        for r in shift.register_assignments.all():
+            if r.register_start_time and r.register_end_time:
+                confirmed_regs.add((
+                    int(r.register_number),
+                    r.register_start_time,
+                    r.register_end_time,
+                ))
+
+        published_regs = set()
+        for r in shift.published_register_assignments.all():
+            if r.register_start_time and r.register_end_time:
+                published_regs.add((
+                    int(r.register_number),
+                    r.register_start_time,
+                    r.register_end_time,
+                ))
+
+        regs_changed = (confirmed_regs != published_regs)
+        if regs_changed:
+            regs_rebuild_shift_ids.add(shift.id)
+
+            # 公開レジを作り直す（確定が無い日は公開レジも空でOK）
+            if confirmed_s and confirmed_e:
+                for (num, st, et) in confirmed_regs:
+                    bulk_regs.append(PublishedRegisterAssignment(
+                        shift=shift,
+                        register_number=num,
+                        register_start_time=st,
+                        register_end_time=et,
+                    ))
+
+    # --- ③ 時刻スナップショット（差分だけ） ---
+    updated_time = 0
+    if changed_shift_ids:
+        updated_time = (
+            ShiftPreference.objects
+            .filter(id__in=list(changed_shift_ids))
+            .update(
+                published_starttime=F('confirmed_starttime'),
+                published_endtime=F('confirmed_endtime'),
+                published_at=now,
+            )
+        )
+
+    # --- ④ レジスナップショット（差分だけ） ---
+    rebuilt_regs = 0
+    if regs_rebuild_shift_ids:
+        PublishedRegisterAssignment.objects.filter(shift_id__in=list(regs_rebuild_shift_ids)).delete()
+        if bulk_regs:
+            PublishedRegisterAssignment.objects.bulk_create(bulk_regs)
+            rebuilt_regs = len(bulk_regs)
+
+        # レジが変わった＝公開内容が変わった、なので published_at も更新
+        ShiftPreference.objects.filter(id__in=list(regs_rebuild_shift_ids)).update(published_at=now)
+
+    if not changed_shift_ids and not regs_rebuild_shift_ids:
+        messages.info(request, "変更がないため公開はスキップしました（差分なし）")
+    else:
+        messages.success(
+            request,
+            f"公開しました（時刻更新: {updated_time}件 / レジ再作成: {len(regs_rebuild_shift_ids)}件 / 公開レジ行: {rebuilt_regs}）"
+        )
+
     return redirect(f"{reverse('shiftgenerator:shift-management-view')}?period_id={period.id}")
 
 @login_required
@@ -1192,7 +1263,7 @@ def published_shift_events_api(request):
 
     qs = (ShiftPreference.objects
           .filter(staff=staff_profile, date__gte=start, date__lt=end)
-          .prefetch_related('register_assignments'))
+          .prefetch_related('published_register_assignments'))
 
     events = []
     for shift in qs:
@@ -1226,7 +1297,7 @@ def published_shift_events_api(request):
         # 公開版（published_*）が入ってる日のみ“確定”として表示
         if shift.published_starttime and shift.published_endtime:
             regs = []
-            for r in shift.register_assignments.all().order_by('register_start_time', 'register_end_time', 'register_number'):
+            for r in shift.published_register_assignments.all().order_by('register_start_time', 'register_end_time', 'register_number'):
                 if r.register_start_time and r.register_end_time:
                     regs.append({
                         "register_number": r.register_number,
@@ -1855,14 +1926,11 @@ def submit_shift(request):
 
 @login_required
 def shift_detail(request, shift_id):
-    try:
-        shift = ShiftPreference.objects.get(id=shift_id, staff=request.user.staff_profile)
-    except ShiftPreference.DoesNotExist:
-        return redirect('shiftgenerator:shift-form')
+    shift = get_object_or_404(ShiftPreference, id=shift_id, staff=request.user.staff_profile)
 
     readonly = request.GET.get('readonly') == '1'
 
-    # ✅ readonly中は削除させない（URL直叩き対策）
+    # readonly中は削除させない（URL直叩き対策）
     if readonly and request.method == 'POST':
         return HttpResponseNotAllowed(['GET'])
 
@@ -1872,7 +1940,6 @@ def shift_detail(request, shift_id):
 
     registers = []
     if readonly:
-        # ✅確定（公開）閲覧のときだけレジを表示したい
         from .models import ShiftRegisterAssignment
         registers = (
             ShiftRegisterAssignment.objects
@@ -1881,8 +1948,24 @@ def shift_detail(request, shift_id):
         )
 
     if request.method == 'POST':
-        shift.delete()
-        messages.success(request, 'シフトが正常に削除されました。')
+        # ✅ ここが重要：行削除ではなく「希望だけ削除」にする
+        has_confirmed = bool(shift.confirmed_starttime and shift.confirmed_endtime)
+        has_published = bool(
+            (shift.published_starttime and shift.published_endtime) or shift.published_at
+        )
+
+        if has_confirmed or has_published:
+            # 希望だけクリア（確定/公開は残す）
+            shift.starttime = None
+            shift.endtime = None
+            shift.holiday = None
+            shift.save(update_fields=['starttime', 'endtime', 'holiday', 'updated_at'])
+            messages.success(request, '希望シフトだけ削除しました（確定/公開は保持）')
+        else:
+            # 希望しかないレコードなら削除してもOK（運用でNULL化に統一でもOK）
+            shift.delete()
+            messages.success(request, '希望シフトを削除しました。')
+
         return redirect('shiftgenerator:shift-form')
 
     return render(request, 'shiftgenerator/shift_detail.html', {

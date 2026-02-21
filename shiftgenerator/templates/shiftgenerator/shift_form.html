@@ -597,6 +597,8 @@
 
     <script>
 document.addEventListener('DOMContentLoaded', function() {
+    const VIEW_KEY = 'shift_view_confirmed';
+    loadViewModeFromStorageOrQuery();
 //日付作成用関数
 function toYMD(dateObj){
   const y = dateObj.getFullYear();
@@ -654,7 +656,32 @@ function formatRegistersText(registers) {
   return `（${parts.join(' / ')}）`;
 }
 
+// ページ読み込み時に URL クエリ or localStorage から表示モードを設定
+function loadViewModeFromStorageOrQuery() {
+  const toggle = document.getElementById('viewConfirmedToggle');
+  if (!toggle) return;
 
+  const qs = new URLSearchParams(window.location.search);
+
+  // ① URLに ?confirmed=1/0 があれば最優先
+  const q = qs.get('confirmed');
+  if (q === '1' || q === '0') {
+    toggle.checked = (q === '1');
+    localStorage.setItem(VIEW_KEY, q);
+    return;
+  }
+
+  // ② なければ localStorage
+  const saved = localStorage.getItem(VIEW_KEY);
+  if (saved === '1') toggle.checked = true;
+  if (saved === '0') toggle.checked = false;
+}
+
+function saveViewModeToStorage() {
+  const toggle = document.getElementById('viewConfirmedToggle');
+  if (!toggle) return;
+  localStorage.setItem(VIEW_KEY, toggle.checked ? '1' : '0');
+}
 
 async function reloadMobileRange() {
   const start = window.calendar.view.activeStart.toISOString().slice(0,10);
@@ -1188,6 +1215,9 @@ function rebuildRegButtons() {// ✅登録ボタンは毎回再構築（確定�
   }
 
   window.calendar.render();
+
+  // ✅ 追加：復元したトグル状態でイベントを取り直す
+  updateCalendar().then(() => rebuildRegButtons());
     mq.addEventListener("change", async () => {
     // いったんボトムシート閉じる
     if (!isMobileNow()) window.closeBottomSheet?.();
@@ -1219,6 +1249,7 @@ function rebuildRegButtons() {// ✅登録ボタンは毎回再構築（確定�
     });
 
     document.getElementById('viewConfirmedToggle')?.addEventListener('change', async () => {
+        saveViewModeToStorage();// ✅表示モードの変更を保存
         window.closeBottomSheet?.();
 
         // イベントをモードに応じて取り直す

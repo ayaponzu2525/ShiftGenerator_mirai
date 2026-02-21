@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.forms import UserChangeForm, UserCreationForm
 from .models import CustomUser, Staff, Skill, StaffSkill, DayOfWeek, ShiftPreference, ShiftHistory, Holiday
-from .models import ShiftSubmissionPeriod, ShiftSubmission, ShiftRegisterAssignment
+from .models import ShiftSubmissionPeriod, ShiftSubmission, ShiftRegisterAssignment, PublishedRegisterAssignment
 
 
 class CustomUserChangeForm(UserChangeForm):
@@ -41,13 +41,20 @@ class HolidayAdmin(admin.ModelAdmin):
 class ShiftPreferenceAdmin(admin.ModelAdmin):
     list_display = ('id', 'staff', 'date', 'starttime', 'endtime', 'holiday')  # 表示するフィールドを指定
     list_filter = ('holiday', 'staff')  # フィルターを追加
-    search_fields = ('staff__name', 'description')  # スタッフ名と説明で検索可能
+    search_fields = ('staff__name',)  # スタッフ名と説明で検索可能
 
 class ShiftSubmissionPeriodAdmin(admin.ModelAdmin):
     list_display = ('label', 'type', 'start_date', 'start_time', 'end_date', 'end_time', 'is_active')
     list_filter = ('type', 'is_active')
     search_fields = ('label',)
 
+
+class PublishedRegisterAssignmentAdmin(admin.ModelAdmin):
+    list_display = ('id', 'shift', 'register_number', 'register_start_time', 'register_end_time', 'created_at')
+    list_filter = ('register_number',)
+    search_fields = ('shift__staff__name', 'shift__date')
+    
+admin.site.register(PublishedRegisterAssignment, PublishedRegisterAssignmentAdmin)
 admin.site.register(CustomUser, CustomUserAdmin)
 admin.site.register(Staff)
 admin.site.register(Skill)

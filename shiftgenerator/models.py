@@ -200,6 +200,18 @@ class ShiftRegisterAssignment(models.Model):
         e = self.register_end_time.strftime('%H:%M') if self.register_end_time else '--:--'
         return f"{self.shift.staff.name} {self.shift.date} レジ{self.register_number}: {s}～{e}"
 
+class PublishedRegisterAssignment(models.Model):
+    shift = models.ForeignKey(
+        ShiftPreference,
+        on_delete=models.CASCADE,
+        related_name='published_register_assignments'
+    )
+    register_number = models.IntegerField()
+    register_start_time = models.TimeField()
+    register_end_time = models.TimeField()
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
 class ShiftHistory(models.Model):
     id = models.AutoField(primary_key=True)
