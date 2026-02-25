@@ -557,6 +557,7 @@
         <div id="sheetDateLabel" class="sheet-date">YYYY-MM-DD</div>
         <button id="sheetCloseBtn" type="button" class="sheet-close" aria-label="閉じる">×</button>
         </div>
+        <div id="periodPublishedAt" class="muted" style="margin:6px 0 10px;"></div>
     </div>
 
     <!-- ②中身：スクロール -->
@@ -599,6 +600,77 @@
 document.addEventListener('DOMContentLoaded', function() {
     const VIEW_KEY = 'shift_view_confirmed';
     loadViewModeFromStorageOrQuery();
+    let periodMetaCache = null; // { periods: [...] }
+
+async function fetchPeriodMetaRange(startYmd, endYmd) {
+  const url = `/api/published-period-meta/?start=${encodeURIComponent(startYmd)}&end=${encodeURIComponent(endYmd)}`;
+  const res = await fetch(url);
+
+  if (!res.ok) {
+    const text = await res.text();
+    console.error('published-period-meta failed:', res.status, text.slice(0, 300));
+    return { periods: [] }; // ★安全側に倒す
+  }
+  return await res.json();
+}
+
+function getPeriodForDate(dateStr) {
+  const d = dateStr; // "YYYY-MM-DD"
+  const periods = periodMetaCache?.periods || [];
+  // dateが含まれるperiodを探す（重複がない前提）
+  return periods.find(p => p.start_date <= d && d <= p.end_date) || null;
+}
+
+function formatPublishedAt(isoStr) {
+  if (!isoStr) return '';
+  const dt = new Date(isoStr);
+  // ★sliceじゃなく Date でローカル表示（これでJSTになる）
+  return dt.toLocaleString('ja-JP', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit'
+  }).replace(/\//g, '-');
+}
+
+// イベントデータから shiftタイプの公開日時を抽出して、最新のものを表示する関数
+function updateGlobalPublishedInfo(events) {
+  const el = document.getElementById('publishedInfo');
+  if (!el) return;
+
+  if (!isViewingConfirmed()) {
+    el.textContent = '';
+    return;
+  }
+
+  if (!events || !events.length) {
+    el.textContent = '公開日時: まだ未公開';
+    return;
+  }
+
+  // shiftタイプだけ対象
+  const publishedTimes = events
+    .filter(ev => ev.extendedProps?.type === 'shift')
+    .map(ev => ev.extendedProps?.published_at)
+    .filter(Boolean);
+
+  if (!publishedTimes.length) {
+    el.textContent = '公開日時: まだ未公開';
+    return;
+  }
+
+  // ISO文字列をDateに変換してmax取得
+  const maxDate = new Date(
+    Math.max(...publishedTimes.map(t => new Date(t).getTime()))
+  );
+
+  el.textContent = `最新公開日時: ${maxDate.toLocaleString('ja-JP', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).replace(/\//g, '-')}`;
+}
+
 //日付作成用関数
 function toYMD(dateObj){
   const y = dateObj.getFullYear();
@@ -668,13 +740,17 @@ function loadViewModeFromStorageOrQuery() {
   if (q === '1' || q === '0') {
     toggle.checked = (q === '1');
     localStorage.setItem(VIEW_KEY, q);
+
+    // ★一回反映したらURLからconfirmedを消す（戻る/リロード事故防止）
+    qs.delete('confirmed');
+    const newUrl = `${location.pathname}?${qs.toString()}`.replace(/\?$/, '');
+    history.replaceState(null, '', newUrl);
     return;
   }
 
-  // ② なければ localStorage
+  // ② なければ localStorage（無ければデフォは希望=0）
   const saved = localStorage.getItem(VIEW_KEY);
-  if (saved === '1') toggle.checked = true;
-  if (saved === '0') toggle.checked = false;
+  toggle.checked = (saved === '1'); // null/0 は false 扱い
 }
 
 function saveViewModeToStorage() {
@@ -850,6 +926,24 @@ function rerenderAllDayDecorations() {
     window.selectedDate = dateStr;
     document.getElementById('sheetDateLabel').textContent = dateStr;
 
+    // 期間公開日時の表示更新（確定表示モードなら meta から拾う）
+    const metaEl = document.getElementById('periodPublishedAt');
+    if (metaEl) {
+    if (!confirmedMode) {
+        metaEl.textContent = '';
+    } else {
+        const period = getPeriodForDate(dateStr); // periodMetaCache から探す
+
+        if (!period) {
+        metaEl.textContent = '公開期間: 不明';
+        } else {
+        const pub = period.period_published_at; // meta APIのMax(published_at)
+        metaEl.textContent =
+            `募集期間: ${period.label} / 公開日時: ${pub ? formatPublishedAt(pub) : 'まだ未公開'}`;
+        }
+    }
+    }
+
     const dayItemsEl = document.getElementById('dayItems');
     async function renderSheetHolidayButtons(dateStr) {
         const wrap = document.getElementById('sheetHolidayButtons');
@@ -916,10 +1010,6 @@ function rerenderAllDayDecorations() {
             // ✅ 公開情報（任意）
             const publishedAt = ev.extendedProps?.published_at;
             const adjusting = ev.extendedProps?.is_adjusting;
-            if (confirmedMode) {
-            if (publishedAt) label += `\n公開: ${publishedAt.slice(0,16).replace('T',' ')}`;
-            if (adjusting) label += `\n※管理者が調整中`;
-            }
         }
 
         btn.textContent = label;
@@ -1002,16 +1092,6 @@ function rerenderAllDayDecorations() {
     window.location.href = newRegisterUrl;
 });
 
-
-// スマホで確定表示ONのときは、登録関連の操作をすべて無効化する関数
-function setReadonlyButtonStyle(btn) {
-  btn.disabled = true;              // クリック無効
-  btn.classList.add('readonly');    // 見た目用（CSSは後で）
-  btn.style.opacity = '0.55';
-  btn.style.pointerEvents = 'none'; // 念のため
-  btn.style.cursor = 'not-allowed';
-}
-
 function rebuildRegButtons() {// ✅登録ボタンは毎回再構築（確定表示のON/OFFで切り替えるため）
   document.querySelectorAll('.reg-btn').forEach(el => el.remove());
   if (isViewingConfirmed()) return;
@@ -1067,25 +1147,36 @@ function rebuildRegButtons() {// ✅登録ボタンは毎回再構築（確定�
         return [];
     },
 
-    // ✅ スマホだけ：表示範囲に応じてAPI取得
+    // ★イベントの取得はすべてここで行う（PCもスマホもここを通す）
     datesSet: async (info) => {
-        if (!isMobileNow()) return;
+    if (!isMobileNow()) return;
 
-        const start = info.startStr.slice(0,10);
-        const end   = info.endStr.slice(0,10);
-        cachedEvents = await fetchEventsRange(start, end);
+    const start = info.startStr.slice(0,10);
+    const end   = info.endStr.slice(0,10);
 
-        window.__cachedEvents = cachedEvents;
-        buildDayTypeMap(cachedEvents);
-        
-        window.calendar.removeAllEvents();
-        window.calendar.addEventSource(cachedEvents);
+    // ① イベント取得
+    cachedEvents = await fetchEventsRange(start, end);
 
-        requestAnimationFrame(() => rerenderAllDayDecorations());
-        },
+    // ② ★確定モードのときだけ meta も取得（ここが2-3）
+    if (isViewingConfirmed()) {
+    try {
+        periodMetaCache = await fetchPeriodMetaRange(start, end);
+    } catch (e) {
+        periodMetaCache = null;
+    }
+    } else {
+    periodMetaCache = null;
+    }
 
+    window.__cachedEvents = cachedEvents;
+    buildDayTypeMap(cachedEvents);
 
+    window.calendar.removeAllEvents();
+    window.calendar.addEventSource(cachedEvents);
 
+    requestAnimationFrame(() => rerenderAllDayDecorations());
+    updateGlobalPublishedInfo(cachedEvents);
+    },
 
     // 初期イベント（PC向け）
     events: eventsEmbedded,
@@ -1239,13 +1330,14 @@ function rebuildRegButtons() {// ✅登録ボタンは毎回再構築（確定�
         window.calendar.removeAllEvents();
         window.calendar.addEventSource(cachedEvents);
         rerenderAllDayDecorations();
+        updateGlobalPublishedInfo(window.__cachedEvents);
     } else {
-        // PCに入ったら埋め込み表示に戻す（装飾は作られない）
-        window.calendar.removeAllEvents();
-        window.calendar.addEventSource(eventsEmbedded);
+        // PCに戻っても、現在のトグル状態に応じてAPIで取り直す
+        await updateCalendar();
     }
 
-    window.calendar.updateSize?.();
+    rebuildRegButtons();
+    requestAnimationFrame(() => window.calendar.updateSize?.());
     });
 
     document.getElementById('viewConfirmedToggle')?.addEventListener('change', async () => {
@@ -1265,29 +1357,38 @@ function rebuildRegButtons() {// ✅登録ボタンは毎回再構築（確定�
     async function updateCalendar() {
     const isMobile = window.matchMedia("(max-width: 991.98px)").matches;
 
-    // ✅スマホ：レンジをAPIで取り直して「イベント＋装飾」を更新
+    /// ✅スマホ：レンジをAPIで取り直して「イベント＋装飾」を更新
     if (isMobile && window.calendar) {
-        try {
+    try {
         const start = window.calendar.view.activeStart.toISOString().slice(0,10);
         const end   = window.calendar.view.activeEnd.toISOString().slice(0,10);
 
+        // ①イベント更新
         window.__cachedEvents = await fetchEventsRange(start, end);
 
-        // ①イベント更新
+        console.log('[periodMetaCache]', periodMetaCache); // デバッグ用
+        // ② ★確定中なら period meta も更新（ここが重要）
+        if (isViewingConfirmed()) {
+        periodMetaCache = await fetchPeriodMetaRange(start, end);
+        } else {
+        periodMetaCache = null;
+        }
+
         window.calendar.removeAllEvents();
         window.calendar.addEventSource(window.__cachedEvents);
 
-        // ②タイプMap更新
+        // ③タイプMap更新
         buildDayTypeMap(window.__cachedEvents);
 
-        // ③スマホ装飾（赤帯/△/□）を全セルに再描画
+        // ④スマホ装飾を再描画
         rerenderAllDayDecorations();
+        updateGlobalPublishedInfo(window.__cachedEvents);
 
         return;
-        } catch (e) {
+    } catch (e) {
         console.error('スマホ更新失敗:', e);
         return;
-        }
+    }
     }
 
     // ✅PC：表示範囲をAPIで取り直す（確定/希望トグルに追従、registersも反映）
@@ -1299,6 +1400,8 @@ function rebuildRegButtons() {// ✅登録ボタンは毎回再構築（確定�
 
         window.calendar.removeAllEvents();
         window.calendar.addEventSource(events);
+
+        updateGlobalPublishedInfo(events);
 
         // PCはマーカー不要だけど、もし何かで使うなら更新してもOK
         // buildDayTypeMap(events);

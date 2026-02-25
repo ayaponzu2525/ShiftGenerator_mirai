@@ -167,6 +167,14 @@ class ShiftPreference(models.Model):
     published_endtime   = models.TimeField(null=True, blank=True) # 公開終了時刻
     published_at        = models.DateTimeField(null=True, blank=True) # 公開日時
     
+    published_period = models.ForeignKey(
+        'ShiftSubmissionPeriod',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='published_shifts',
+        help_text='この確定シフトを公開した募集期間'
+    )
+    
     day_of_week = models.ForeignKey(DayOfWeek, on_delete=models.CASCADE)  # DayOfWeek モデルとの関連付け
     holiday = models.ForeignKey(Holiday, on_delete=models.SET_NULL, null=True, blank=True)  # Holiday モデルとの関連付け
 

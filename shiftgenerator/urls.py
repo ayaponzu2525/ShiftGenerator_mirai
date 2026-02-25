@@ -33,7 +33,8 @@ urlpatterns = [
     path('shift-period-reopen/<int:period_id>/', views.shift_period_reopen, name='shift-period-reopen'),
     path('shift-period-publish/<int:period_id>/', views.shift_period_publish, name='shift-period-publish'),
     path('api/published-shift-events/', views.published_shift_events_api, name='published-shift-events'),
-
+    path('api/published-period-meta/', views.published_period_meta_api, name='published-period-meta'),
+    
     path('shift-management/', views.shift_management, name='shift-management'),
     path('shift-calendar-view/', views.shift_calendar_view, name='shift-calendar-view'),
     path('copy-shifts/', views.copy_shifts, name='copy-shifts'),

@@ -11,6 +11,7 @@ from django.utils.dateparse import parse_date, parse_time, parse_datetime
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.shortcuts import get_object_or_404, render, redirect
 from django.utils.timezone import now, localdate
+from django.db.models import Max
 
 import pandas as pd
 import pickle
@@ -1225,6 +1226,7 @@ def shift_period_publish(request, period_id):
                 published_starttime=F('confirmed_starttime'),
                 published_endtime=F('confirmed_endtime'),
                 published_at=now,
+                published_period=period,
             )
         )
 
@@ -1237,7 +1239,19 @@ def shift_period_publish(request, period_id):
             rebuilt_regs = len(bulk_regs)
 
         # レジが変わった＝公開内容が変わった、なので published_at も更新
-        ShiftPreference.objects.filter(id__in=list(regs_rebuild_shift_ids)).update(published_at=now)
+        ShiftPreference.objects.filter(id__in=list(regs_rebuild_shift_ids)).update(
+            published_at=now,
+            published_period=period,
+        )
+    
+    # ★差分の有無に関係なく、この期間の「公開対象シフト」は period を必ず付ける
+    # これがないと、今回公開した期間に重なってるけど内容に変更がないシフトが、次回以降の公開で漏れてしまう
+    ShiftPreference.objects.filter(
+        date__range=(period.start_date, period.end_date),
+        staff__is_active=True,
+        published_starttime__isnull=False,
+        published_endtime__isnull=False,
+    ).exclude(published_period=period).update(published_period=period)
 
     if not changed_shift_ids and not regs_rebuild_shift_ids:
         messages.info(request, "変更がないため公開はスキップしました（差分なし）")
@@ -1263,7 +1277,20 @@ def published_shift_events_api(request):
 
     qs = (ShiftPreference.objects
           .filter(staff=staff_profile, date__gte=start, date__lt=end)
+          .select_related('published_period')
           .prefetch_related('published_register_assignments'))
+    
+    # periodごとの「最新公開日時（published_at の max）」をまとめて作る
+    period_ids = {s.published_period_id for s in qs if s.published_period_id}
+    latest_map = {}
+    if period_ids:
+        rows = (
+            ShiftPreference.objects
+            .filter(published_period_id__in=period_ids, published_at__isnull=False)
+            .values('published_period_id')
+            .annotate(latest=Max('published_at'))
+        )
+        latest_map = {r['published_period_id']: r['latest'] for r in rows}
 
     events = []
     for shift in qs:
@@ -1309,6 +1336,20 @@ def published_shift_events_api(request):
             # 「調整中」判定：ドラフト更新が公開より新しい
             is_adjusting = bool(shift.published_at and shift.updated_at and shift.updated_at > shift.published_at)
 
+            p = shift.published_period
+            period_payload = None
+            if p:
+                latest_dt = latest_map.get(p.id)
+                period_payload = {
+                    "id": p.id,
+                    "label": p.label,
+                    "start_date": p.start_date.isoformat(),
+                    "end_date": p.end_date.isoformat(),
+                    "type": p.type,
+                    # この募集期間内での最新公開日時（max）
+                    "latest_published_at": latest_dt.isoformat() if latest_dt else None,
+                }
+                
             events.append({
                 "id": str(shift.id),
                 "title": f'{shift.published_starttime.strftime("%H:%M")} - {shift.published_endtime.strftime("%H:%M")}',
@@ -1321,11 +1362,68 @@ def published_shift_events_api(request):
                     "endtime": shift.published_endtime.strftime("%H:%M"),
                     "registers": regs,
                     "published_at": published_at,
+                    "published_period": period_payload,
                     "is_adjusting": is_adjusting,
                 }
             })
 
     return JsonResponse(events, safe=False)
+
+@login_required
+def published_period_meta_api(request):
+    user = request.user
+    staff = getattr(user, 'staff_profile', None)
+    if not staff:
+        return JsonResponse({'error': 'no staff'}, status=403)
+
+    start = parse_date(request.GET.get('start'))
+    end   = parse_date(request.GET.get('end'))
+    if not start or not end:
+        return JsonResponse({'error': 'start/end required'}, status=400)
+
+    # このレンジに関係する period を取る（公開/非公開どちらも返してOK）
+    periods = ShiftSubmissionPeriod.objects.filter(
+        start_date__lt=end,
+        end_date__gte=start,
+        is_active=True,
+    ).order_by('start_date')
+
+    # staff × period ごとの「期間の公開日時」を集計
+    payload = []
+    for p in periods:
+        dt = (ShiftPreference.objects
+            .filter(
+                staff=staff,
+                date__gte=p.start_date,
+                date__lte=p.end_date,
+                published_at__isnull=False,
+            )
+            .aggregate(mx=Max('published_at'))["mx"])
+
+        payload.append({
+            "id": p.id,
+            "label": p.label,
+            "start_date": p.start_date.isoformat(),
+            "end_date": p.end_date.isoformat(),
+            "type": p.type,
+            "period_published_at": dt.isoformat() if dt else None,
+        })
+
+    return JsonResponse({"periods": payload})
+
+    payload = []
+    for p in periods:
+        dt = max_map.get(p.id)
+        payload.append({
+            "id": p.id,
+            "label": p.label,
+            "start_date": p.start_date.isoformat(),
+            "end_date": p.end_date.isoformat(),
+            "type": p.type,
+            "period_published_at": dt.isoformat() if dt else None,
+        })
+
+    return JsonResponse({"periods": payload})
 
 @require_POST
 @user_passes_test(lambda u: u.is_superuser)
@@ -1929,23 +2027,57 @@ def shift_detail(request, shift_id):
     shift = get_object_or_404(ShiftPreference, id=shift_id, staff=request.user.staff_profile)
 
     readonly = request.GET.get('readonly') == '1'
+    
+    # ▼ 追加：初期化（readonlyじゃなくても未定義にならないように）
+    period_label = None
+    period_start = None
+    period_end = None
+    period_latest_published_at = None
 
     # readonly中は削除させない（URL直叩き対策）
     if readonly and request.method == 'POST':
         return HttpResponseNotAllowed(['GET'])
 
-    shift_starttime = shift.starttime.strftime("%H:%M") if shift.starttime else '--'
-    shift_endtime   = shift.endtime.strftime("%H:%M") if shift.endtime else '--'
+    # ▼ 表示する時間：readonlyなら公開版
+    if readonly:
+        shift_starttime = shift.published_starttime.strftime("%H:%M") if shift.published_starttime else '--'
+        shift_endtime   = shift.published_endtime.strftime("%H:%M") if shift.published_endtime else '--'
+    else:
+        shift_starttime = shift.starttime.strftime("%H:%M") if shift.starttime else '--'
+        shift_endtime   = shift.endtime.strftime("%H:%M") if shift.endtime else '--'
     holiday_name    = shift.holiday.holiday_name if shift.holiday else '--'
 
     registers = []
     if readonly:
-        from .models import ShiftRegisterAssignment
+        PublishedRegisterAssignment.objects
         registers = (
-            ShiftRegisterAssignment.objects
+            PublishedRegisterAssignment.objects
             .filter(shift=shift)
             .order_by('register_number', 'register_start_time')
         )
+        
+        # ▼▼ 追加：募集期間の最新公開日時（period内のpublished_atのmax） ▼▼
+        period_label = None
+        period_start = None
+        period_end = None
+        period_latest_published_at = None
+
+        p = shift.published_period
+        if p:
+            period_label = p.label
+            period_start = p.start_date
+            period_end = p.end_date
+
+            # 同じ募集期間の公開済みの中で最新（このスタッフ分）
+            period_latest_published_at = (ShiftPreference.objects
+                .filter(staff=shift.staff, published_period=p)
+                .aggregate(m=Max('published_at'))
+                .get('m')
+            )
+
+            # 表示をJSTに寄せたい場合（USE_TZ=True前提）
+            if period_latest_published_at:
+                period_latest_published_at = timezone.localtime(period_latest_published_at)
 
     if request.method == 'POST':
         # ✅ ここが重要：行削除ではなく「希望だけ削除」にする
@@ -1975,6 +2107,10 @@ def shift_detail(request, shift_id):
         'holiday_name': holiday_name,
         'readonly': readonly,
         'registers': registers,
+        'period_label': period_label,
+        'period_start': period_start,
+        'period_end': period_end,
+        'period_latest_published_at': period_latest_published_at,
     })
 
 def touch_shift_history(staff_profile, starttime, endtime, limit=10):

@@ -83,6 +83,27 @@
                 </tr>
                 {% if readonly %}
                 <tr>
+                <th>募集期間</th>
+                <td>
+                    {% if period_label %}
+                    {{ period_label }}
+                    {% else %}
+                    --
+                    {% endif %}
+                </td>
+                </tr>
+
+                <tr>
+                <th>公開日時（最新）</th>
+                <td>
+                    {% if period_latest_published_at %}
+                    {{ period_latest_published_at|date:"Y-m-d H:i" }}
+                    {% else %}
+                    まだ未公開
+                    {% endif %}
+                </td>
+                </tr>
+                <tr>
                 <th>レジ</th>
                 <td>
                     {% if registers and registers|length %}
