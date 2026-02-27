@@ -540,8 +540,7 @@
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-dismiss="modal">キャンセル</button>
-                    <button type="button" class="btn btn-primary" id="registerShiftButton" disabled>休みを登録</button> <!-- 初期状態で無効化 -->
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">閉じる</button>
                 </div>
             </div>
         </div>
@@ -748,9 +747,18 @@ function loadViewModeFromStorageOrQuery() {
     return;
   }
 
-  // ② なければ localStorage（無ければデフォは希望=0）
-  const saved = localStorage.getItem(VIEW_KEY);
-  toggle.checked = (saved === '1'); // null/0 は false 扱い
+    const params = new URLSearchParams(window.location.search);
+    const fromHome = params.get('from') === 'home';
+
+    if (fromHome) {
+    // ホームから来たら強制的に希望
+    toggle.checked = false;
+    localStorage.setItem(VIEW_KEY, '0');
+    } else {
+    // それ以外は前回状態を維持
+    const saved = localStorage.getItem(VIEW_KEY);
+    toggle.checked = (saved === '1');
+    }
 }
 
 function saveViewModeToStorage() {
@@ -920,26 +928,47 @@ function rerenderAllDayDecorations() {
     }
   }
 
-  function openBottomSheet(dateStr, dayItems) {
+  async function openBottomSheet(dateStr, dayItems) {
     const confirmedMode = isViewingConfirmed();//確定表示モードかどうか
     
     window.selectedDate = dateStr;
     document.getElementById('sheetDateLabel').textContent = dateStr;
 
-    // 期間公開日時の表示更新（確定表示モードなら meta から拾う）
+    // 期間metaの取得（確定表示時）
+    if (confirmedMode && !periodMetaCache) {
+        try {
+            // 月全体の範囲でフェッチ（日付1日だけだとperiodが見つからないことがある）
+            const start = window.calendar.view.activeStart.toISOString().slice(0,10);
+            const end   = window.calendar.view.activeEnd.toISOString().slice(0,10);
+            periodMetaCache = await fetchPeriodMetaRange(start, end);
+        } catch (e) {
+            periodMetaCache = null;
+        }
+    }
+    
+    // 期間公開日時の表示更新（PCと同じくイベントデータから直接取る）
     const metaEl = document.getElementById('periodPublishedAt');
     if (metaEl) {
     if (!confirmedMode) {
         metaEl.textContent = '';
     } else {
-        const period = getPeriodForDate(dateStr); // periodMetaCache から探す
+        // dayItems の shift タイプから published_at の max を取る
+        const publishedTimes = dayItems
+        .filter(ev => ev.extendedProps?.type === 'shift')
+        .map(ev => ev.extendedProps?.published_period?.latest_published_at)
+        .filter(Boolean);
 
-        if (!period) {
-        metaEl.textContent = '公開期間: 不明';
+        if (publishedTimes.length) {
+        const maxDate = new Date(Math.max(...publishedTimes.map(t => new Date(t).getTime())));
+        metaEl.textContent = `最新公開日時: ${formatPublishedAt(maxDate.toISOString())}`;
         } else {
-        const pub = period.period_published_at; // meta APIのMax(published_at)
-        metaEl.textContent =
-            `募集期間: ${period.label} / 公開日時: ${pub ? formatPublishedAt(pub) : 'まだ未公開'}`;
+        // published_at が1件もない → periodMetaCache があれば期間名だけ出す
+        const period = getPeriodForDate(dateStr);
+        if (period) {
+            metaEl.textContent = `募集期間: ${period.label} / まだ未公開`;
+        } else {
+            metaEl.textContent = 'まだ未公開';
+        }
         }
     }
     }
@@ -1106,11 +1135,23 @@ function rebuildRegButtons() {// ✅登録ボタンは毎回再構築（確定�
     button.innerText = '登録';
     button.className = 'btn btn-primary btn-sm reg-btn';
 
+    // ★「セルクリック（dateClick）」に伝播させない保険
+    ['pointerdown','mousedown','touchstart'].forEach(evName => {
+    button.addEventListener(evName, (e) => {
+        e.stopPropagation();
+        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+    }, true); // ★capture=true がポイント（FCより先に止める）
+    });
+
     button.onclick = function(e) {
-      e.stopPropagation();
-      window.selectedDate = dateStr;
-      document.getElementById('dateDisplay').textContent = dateStr;
-      $('#shiftModal').modal('show');
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+
+        // （以下そのまま）
+        window.selectedDate = dateStr;
+        document.getElementById('dateDisplay').textContent = dateStr;
+        $('#shiftModal').modal('show');
 
       fetch('/get-shift-history/')
         .then(r => r.json())
@@ -1255,9 +1296,20 @@ function rebuildRegButtons() {// ✅登録ボタンは毎回再構築（確定�
         button.innerText = '登録';
         button.className = 'btn btn-primary btn-sm reg-btn';
 
-        button.onclick = function(e) {
+        // ★「セルクリック（dateClick）」に伝播させない保険
+        ['pointerdown','mousedown','touchstart'].forEach(evName => {
+        button.addEventListener(evName, (e) => {
             e.stopPropagation();
+            if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+        }, true); // ★capture=true がポイント（FCより先に止める）
+        });
 
+        button.onclick = function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+
+            // （以下そのまま）
             window.selectedDate = dateStr;
             document.getElementById('dateDisplay').textContent = dateStr;
             $('#shiftModal').modal('show');
@@ -1286,11 +1338,19 @@ function rebuildRegButtons() {// ✅登録ボタンは毎回再構築（確定�
 
     // ✅ スマホ：日付タップでボトムシート
     dateClick: function(info) {
-        
+        // ✅PCなら何もしない（modalもボトムシートも開かない）
+        if (!isMobileNow()) return;
+
+        // ✅登録ボタン起点なら無視（保険）
+        const t = info.jsEvent?.target;
+        if (t && t.closest?.('.reg-btn')) return;
+
         const d = toYMD(info.date);
-        const items = (window.__cachedEvents || cachedEvents).filter(ev => (ev.start || "").slice(0,10) === d);
+        const items = (window.__cachedEvents || cachedEvents)
+            .filter(ev => (ev.start || "").slice(0,10) === d);
+
         openBottomSheet(d, items);
-        },
+    },
 
 
   });
@@ -1412,6 +1472,10 @@ function rebuildRegButtons() {// ✅登録ボタンは毎回再構築（確定�
     }
 
     window.updateCalendar = updateCalendar;
+    window.isViewingConfirmed = isViewingConfirmed;
+    window.guardReadonly = guardReadonly;
+    window.getEventsApiUrl = getEventsApiUrl;
+    window.fetchEventsRange = fetchEventsRange
 });
 
 // ===== 追加：日別の件数/休み判定 =====

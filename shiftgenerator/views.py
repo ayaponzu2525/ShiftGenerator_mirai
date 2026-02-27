@@ -1391,14 +1391,18 @@ def published_period_meta_api(request):
     # staff × period ごとの「期間の公開日時」を集計
     payload = []
     for p in periods:
-        dt = (ShiftPreference.objects
-            .filter(
-                staff=staff,
-                date__gte=p.start_date,
-                date__lte=p.end_date,
-                published_at__isnull=False,
-            )
-            .aggregate(mx=Max('published_at'))["mx"])
+        qs = ShiftPreference.objects.filter(
+            staff=staff,
+            date__gte=p.start_date,
+            date__lte=p.end_date,
+        )
+        # published_at が入っているレコードのMaxを取る
+        dt = qs.filter(published_at__isnull=False).aggregate(mx=Max('published_at'))["mx"]
+        # 確定シフトが存在するかどうかも返す
+        has_confirmed = qs.filter(
+            confirmed_starttime__isnull=False,
+            confirmed_endtime__isnull=False,
+        ).exists()
 
         payload.append({
             "id": p.id,
@@ -1407,20 +1411,7 @@ def published_period_meta_api(request):
             "end_date": p.end_date.isoformat(),
             "type": p.type,
             "period_published_at": dt.isoformat() if dt else None,
-        })
-
-    return JsonResponse({"periods": payload})
-
-    payload = []
-    for p in periods:
-        dt = max_map.get(p.id)
-        payload.append({
-            "id": p.id,
-            "label": p.label,
-            "start_date": p.start_date.isoformat(),
-            "end_date": p.end_date.isoformat(),
-            "type": p.type,
-            "period_published_at": dt.isoformat() if dt else None,
+            "has_confirmed": has_confirmed,  # ★追加
         })
 
     return JsonResponse({"periods": payload})
@@ -2070,7 +2061,7 @@ def shift_detail(request, shift_id):
 
             # 同じ募集期間の公開済みの中で最新（このスタッフ分）
             period_latest_published_at = (ShiftPreference.objects
-                .filter(staff=shift.staff, published_period=p)
+                .filter(published_period=p, published_at__isnull=False)
                 .aggregate(m=Max('published_at'))
                 .get('m')
             )
