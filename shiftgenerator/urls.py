@@ -48,6 +48,7 @@ urlpatterns = [
     
     path('staff-management/', views.staff_management, name='staff-management'),
     path('bulk-reset-to-wish/', views.bulk_reset_to_wish, name='bulk-reset-to-wish'),
+    path('bulk-reset-preview/', views.bulk_reset_preview, name='bulk-reset-preview'),
     path('staff-disable/<int:staff_id>/', views.staff_disable, name='staff-disable'),
     path('staff-skill/<int:staff_id>/', views.staff_skill, name='staff-skill'),
     path('staff-password/<int:staff_id>/', views.staff_password, name='staff-password'),

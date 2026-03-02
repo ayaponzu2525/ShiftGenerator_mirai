@@ -1577,6 +1577,22 @@ def shift_management(request):
             next_month = today.month + 1 if today.month < 12 else 1
             next_year = today.year if today.month < 12 else today.year + 1
             target_date = date(next_year, next_month, 1)
+    
+    # period一覧（とりあえず active を並べる）
+    periods = ShiftSubmissionPeriod.objects.all().order_by('-start_date', '-id')
+
+    # ★追加：選択中period（URL ?period_id=xx か、なければ「今日を含むactive」→なければ先頭）
+    pid = request.GET.get('period_id')
+    selected_period_id = None
+    if pid and pid.isdigit():
+        selected_period_id = int(pid)
+    else:
+        today = localdate()
+        p = periods.filter(start_date__lte=today, end_date__gte=today).first()
+        if p:
+            selected_period_id = p.id
+        else:
+            selected_period_id = periods.first().id if periods.exists() else None
 
     # --- 確定シフト（編集対象） ---
     preferences = ShiftPreference.objects.filter(
@@ -1627,36 +1643,141 @@ def shift_management(request):
         'date': target_date.isoformat(),
         'selected_date': target_date,
         'register_assignments': register_data,
+        'periods': periods,
+        'selected_period_id': selected_period_id,
     }
     return render(request, 'shiftgenerator/shift_management.html', context)
 
+# views.py
 @login_required
 @require_POST
-@transaction.atomic
-def bulk_reset_to_wish(request):
-    """
-    指定した日付範囲のシフトを
-      - いったん確定シフト＋レジを全部クリア
-      - そのあと「希望(starttime/endtime)」から確定(confirmed_*)を作り直す
-    staff_id があればその人だけ、無ければ全員（is_active=True）対象。
-    """
+@user_passes_test(lambda u: u.is_superuser)
+def bulk_reset_preview(request):
     import json
     try:
         payload = json.loads(request.body or "{}")
     except json.JSONDecodeError:
         return JsonResponse({"success": False, "error": "JSON が不正です。"}, status=400)
 
-    start_str = payload.get("start")
-    end_str   = payload.get("end")
-    staff_id  = payload.get("staff_id")  # None または int
+    period_id = payload.get("period_id")
+    if not period_id:
+        return JsonResponse({"success": False, "error": "period_id が必要です。"}, status=400)
 
-    start = parse_date(start_str) if start_str else None
-    end   = parse_date(end_str)   if end_str   else None
+    period = get_object_or_404(ShiftSubmissionPeriod, id=period_id)
+
+    start = parse_date(payload.get("start")) if payload.get("start") else period.start_date
+    end   = parse_date(payload.get("end"))   if payload.get("end")   else period.end_date
+    if not start or not end or start > end:
+        return JsonResponse({"success": False, "error": "日付範囲が不正です。"}, status=400)
+
+    # period内に丸める
+    if start < period.start_date: start = period.start_date
+    if end > period.end_date: end = period.end_date
+
+    staff_id = payload.get("staff_id")  # null or int
+
+    staff_qs = Staff.objects.filter(is_active=True)
+    if staff_id is not None:
+        staff_qs = staff_qs.filter(id=staff_id)
+    if not staff_qs.exists():
+        return JsonResponse({"success": False, "error": "対象スタッフが見つかりません。"}, status=404)
+
+    submissions = ShiftSubmission.objects.filter(period=period, staff__in=staff_qs)
+    sub_cnt = submissions.count()
+    
+    # ① 削除対象の確定シフト数（DBから正確に）
+    confirmed_qs = ShiftPreference.objects.filter(
+        staff__in=staff_qs,
+        date__gte=start, date__lte=end,
+        confirmed_starttime__isnull=False,
+        confirmed_endtime__isnull=False,
+    )
+    shifts = confirmed_qs.count()
+
+    # ② 削除対象のレジ割当数
+    regs = ShiftRegisterAssignment.objects.filter(shift__in=confirmed_qs).count()
+
+    # ③ 追加される確定シフト数（提出 snapshot から数える）
+    wishes = 0
+    holiday_rows = 0
+    time_rows = 0
+    
+    print("staff_id payload:", staff_id)
+    print("staff_qs ids:", list(staff_qs.values_list("id", flat=True)))
+    print("submission staff ids:", list(ShiftSubmission.objects.filter(period=period).values_list("staff_id", flat=True)))
+    submissions = ShiftSubmission.objects.filter(period=period, staff__in=staff_qs)
+
+    for sub in submissions:
+        snap = sub.snapshot or []
+        for row in snap:
+            d = parse_date(row.get("date")) if row.get("date") else None
+            if not d or d < start or d > end:
+                continue
+            # holidayは確定にはコピーしない前提（= wishesに数えない）
+            if row.get("holiday_id"):
+                holiday_rows += 1
+                continue
+            
+            if row.get("starttime") and row.get("endtime"):
+                time_rows += 1
+                wishes += 1
+
+    return JsonResponse({"success": True,
+                         "shifts": shifts,
+                         "regs": regs,
+                         "wishes": wishes,
+                         "sub_cnt": sub_cnt,
+                         "holiday_rows": holiday_rows,
+                         "time_rows": time_rows,})
+
+def parse_time_any(s: str):
+    # "14:00" / "14:00:00" 両対応
+    return time.fromisoformat(s)
+
+def get_dow_for_date(d):
+    return DayOfWeek.objects.get(day_number=d.weekday())  # 月0..日6
+
+@login_required
+@require_POST
+@transaction.atomic
+def bulk_reset_to_wish(request):
+    """
+    指定した募集期間(period_id)の範囲で
+      - いったん確定シフト＋レジを全部クリア
+      - そのあと「提出時 snapshot」から確定(confirmed_*)を作り直す
+
+    staff_id があればその人だけ、無ければ全員（is_active=True）対象。
+    start/end が渡された場合は period 範囲内に丸める（渡されなければ period 全体）。
+    """
+    import json
+    from datetime import timedelta, datetime, time
+    from django.db import transaction
+
+    try:
+        payload = json.loads(request.body or "{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"success": False, "error": "JSON が不正です。"}, status=400)
+
+    period_id = payload.get("period_id")
+    if not period_id:
+        return JsonResponse({"success": False, "error": "period_id が必要です。"}, status=400)
+
+    period = get_object_or_404(ShiftSubmissionPeriod, id=period_id)
+
+    # 反映範囲：payload があれば period内に丸める、無ければ period 全体
+    start = parse_date(payload.get("start")) if payload.get("start") else period.start_date
+    end   = parse_date(payload.get("end"))   if payload.get("end")   else period.end_date
 
     if not start or not end or start > end:
         return JsonResponse({"success": False, "error": "日付範囲が不正です。"}, status=400)
 
-    # 対象スタッフ
+    if start < period.start_date:
+        start = period.start_date
+    if end > period.end_date:
+        end = period.end_date
+
+    staff_id = payload.get("staff_id")
+
     staff_qs = Staff.objects.filter(is_active=True)
     if staff_id is not None:
         staff_qs = staff_qs.filter(id=staff_id)
@@ -1664,13 +1785,23 @@ def bulk_reset_to_wish(request):
     if not staff_qs.exists():
         return JsonResponse({"success": False, "error": "対象スタッフが見つかりません。"}, status=404)
 
+    warnings = []
     total_reset = 0
 
-    cur = start
-    from datetime import timedelta
-    while cur <= end:
-        # この日＋対象スタッフの ShiftPreference 全体
-        base_qs = ShiftPreference.objects.filter(date=cur, staff__in=staff_qs)
+    # snapshot を staffごとに先に取っておく（N+1を減らす）
+    submissions = {
+        s.staff_id: s
+        for s in ShiftSubmission.objects.filter(period=period, staff__in=staff_qs)
+    }
+
+    # 期間内の確定を全部クリア（スタッフ単位でまとめてやる）
+    with transaction.atomic():
+        # 対象期間の ShiftPreference（対象スタッフ）
+        base_qs = ShiftPreference.objects.filter(
+            staff__in=staff_qs,
+            date__gte=start,
+            date__lte=end,
+        )
 
         # ① 確定シフトに紐づくレジを全部削除
         confirmed_qs = base_qs.filter(
@@ -1681,23 +1812,107 @@ def bulk_reset_to_wish(request):
         if shift_ids:
             ShiftRegisterAssignment.objects.filter(shift_id__in=shift_ids).delete()
 
-        # ② いったん確定時間を全部クリア
+        # ② confirmed を全部クリア
         confirmed_qs.update(confirmed_starttime=None, confirmed_endtime=None)
 
-        # ③ 希望(starttime/endtime がある行)を「確定」にコピー
-        wish_qs = base_qs.filter(
-            starttime__isnull=False,
-            endtime__isnull=False,
-        )
-        for p in wish_qs:
-            p.confirmed_starttime = p.starttime
-            p.confirmed_endtime   = p.endtime
-            p.save(update_fields=["confirmed_starttime", "confirmed_endtime"])
-            total_reset += 1
+        # ③ “confirmed-only で作ったゴミ行” を先に掃除（空行を消す）
+        #    ※希望(start/end)もholidayもなく、confirmedも空になった行が残るので削除
+        base_qs.filter(
+            starttime__isnull=True,
+            endtime__isnull=True,
+            holiday__isnull=True,
+            confirmed_starttime__isnull=True,
+            confirmed_endtime__isnull=True,
+            published_starttime__isnull=True,
+            published_endtime__isnull=True,
+            published_period__isnull=True,
+        ).delete()
 
-        cur += timedelta(days=1)
+        # ④ staffごとに snapshot から確定を復元
+        for staff in staff_qs:
+            sub = submissions.get(staff.id)
+            if not sub or not sub.snapshot:
+                warnings.append(f"{staff.name}：提出が無い（snapshot無し）ためスキップ")
+                continue
 
-    return JsonResponse({"success": True, "count": total_reset})
+            # snapshot から、対象範囲内の「シフト（holidayなし）」だけ抽出
+            items = []
+            for row in sub.snapshot:
+                d_str = row.get("date")
+                st = row.get("starttime")
+                et = row.get("endtime")
+                holiday_id = row.get("holiday_id")
+
+                if not d_str:
+                    continue
+                d = parse_date(d_str)
+                if not d or d < start or d > end:
+                    continue
+
+                # holiday は確定にはコピーしない（確定削除＝休みは表示ロジックで表現）
+                if holiday_id:
+                    continue
+
+                if st and et:
+                    items.append((d, st, et))
+
+            if not items:
+                warnings.append(f"{staff.name}：期間内に提出シフトが無い（holidayのみ/空）")
+                continue
+
+            # 同日2件まで想定：既存の希望行に一致があればそこにconfirmedを付与、
+            # 無ければ confirmed-only 行を新規作成して復元
+            for (d, st_str, et_str) in items:
+                # "HH:MM" -> time
+                st_time = time.fromisoformat(st_str)
+                et_time = time.fromisoformat(et_str)
+
+                # まず同じ希望行（start/end一致）があればそれを使う
+                target = ShiftPreference.objects.filter(
+                    staff=staff,
+                    date=d,
+                    starttime=st_time,
+                    endtime=et_time,
+                ).first()
+                
+                JP = ["月", "火", "水", "木", "金", "土", "日"]
+
+                dow, _ = DayOfWeek.objects.get_or_create(
+                    day_number=d.weekday(),
+                    defaults={"day_name": JP[d.weekday()]}
+                )
+
+                if target:
+                    target.confirmed_starttime = st_time
+                    target.confirmed_endtime = et_time
+                    target.save(update_fields=["confirmed_starttime", "confirmed_endtime"])
+                else:
+                    # 希望が消されてても復元できるよう confirmed-only 行を作る
+                    ShiftPreference.objects.create(
+                        staff=staff,
+                        date=d,
+                        day_of_week=dow,
+                        starttime=None,
+                        endtime=None,
+                        holiday=None,
+                        confirmed_starttime=st_time,
+                        confirmed_endtime=et_time,
+                    )
+
+                total_reset += 1
+
+    return JsonResponse({
+        "success": True,
+        "count": total_reset,
+        "warnings": warnings,
+        "period": {
+            "id": period.id,
+            "label": period.label,
+            "start_date": period.start_date.isoformat(),
+            "end_date": period.end_date.isoformat(),
+            "type": period.type,
+        }
+    })
 
 # shift_formのためのどこ見てるかフック
 @login_required

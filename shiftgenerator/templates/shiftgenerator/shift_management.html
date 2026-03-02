@@ -173,7 +173,21 @@
       <span id="unsavedIndicator" class="badge badge-warning ml-2" style="display:none;">未保存の変更</span>
 
     </div>
+
+    <label for="periodSelect"><strong>募集期間：</strong></label>
+    <select id="periodSelect" class="form-control form-control-sm" style="max-width: 360px; display:inline-block;">
+      {% for p in periods %}
+        <option value="{{ p.id }}"
+                data-start="{{ p.start_date|date:'Y-m-d' }}"
+                data-end="{{ p.end_date|date:'Y-m-d' }}"
+                {% if p.id == selected_period_id %}selected{% endif %}>
+          {{ p.label }}（{{ p.start_date }}〜{{ p.end_date }} / {{ p.type }}{% if not p.is_active %} / 停止中{% endif %}）
+        </option>
+      {% endfor %}
+    </select>
   </div>
+
+  
 
   <!-- ナビゲーション -->
   <div class="btn-group-custom">
@@ -347,7 +361,14 @@
     console.log('Groups count:', groups.length);
     // console.log('wishItems:', wishItems.get ? wishItems.get() : wishItems);
 
-
+    // CSRFトークン取得のユーティリティ
+function getCookie(name) {
+  const m = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+  return m ? m.pop() : '';
+}
+function csrfToken() {
+  return getCookie('csrftoken');
+}
 
     //変更を保存する配列
     let changes = [];  // 配列で管理
@@ -472,6 +493,32 @@
       console.log('Current changes:', changes);
       updateUnsavedIndicator();
     }
+
+    // 募集期間セレクトの値を取得する関数
+    function getSelectedPeriodId() {
+      const el = document.getElementById('periodSelect');
+      return el ? parseInt(el.value, 10) : null;
+    }
+
+    // periodを変えたら start/end をそのperiodの範囲に自動セット
+    document.addEventListener('DOMContentLoaded', () => {
+      // periodを変えたら start/end をそのperiodの範囲に自動セット
+      const sel = document.getElementById('periodSelect');
+      if (!sel) return;
+
+      function applyPeriodRangeFromSelected() {
+        const opt = sel.selectedOptions[0];
+        const ps = opt.getAttribute('data-start');
+        const pe = opt.getAttribute('data-end');
+        document.getElementById('startDate').value = ps;
+        document.getElementById('endDate').value = pe;
+      }
+
+      sel.addEventListener('change', applyPeriodRangeFromSelected);
+
+      // ★初期表示時にも反映（これ大事）
+      applyPeriodRangeFromSelected();
+    });
 
     function pushRemoveRegChange(shiftId, regId) {
       const sid = String(shiftId);
@@ -1044,7 +1091,7 @@
         const name = document.createElement('span');
         name.textContent = group.name;
         name.className = 'staff-label';     // ←クリック判定用
-        name.dataset.id = group.id;
+        name.dataset.staffId = group.id;
         name.dataset.name = group.name;
         wrap.appendChild(name);
 
@@ -2466,16 +2513,52 @@
 
     // 全体/個人 兼用の確認
     async function confirmBulkResetSafely(startYmd, endYmd, staffIdOrNull) {
-      const { shifts, regs, wishes } = countTargetsForRange(startYmd, endYmd, staffIdOrNull);
+      const periodId = getSelectedPeriodId();
+      if (!periodId) {
+        alert('募集期間を選択してください');
+        return false;
+      }
+
+      const res = await fetch('/bulk-reset-preview/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': csrfToken(),
+        },
+        body: JSON.stringify({
+          period_id: periodId,
+          start: startYmd,
+          end: endYmd,
+          staff_id: staffIdOrNull,
+        }),
+      });
+
+    if (!res.ok) {
+      const txt = await res.text();
+      console.error('bulk-reset-preview failed', res.status, txt);
+      alert(`bulk-reset-preview 失敗: HTTP ${res.status}`);
+      return false;
+    }
+
+      const data = await res.json();
+      if (!data.success) {
+        alert(data.error || '概算取得に失敗しました');
+        return false;
+      }
+
+      const { shifts, regs, wishes, sub_cnt, holiday_rows, time_rows } = data;
       const who = (staffIdOrNull === null) ? '全スタッフ' : `スタッフID ${staffIdOrNull}`;
       const msg =
-        `【確認】${who} の ${startYmd} ～ ${endYmd} を
-    「確定シフト＋レジ全削除 → 希望シフトで再構成」します。
+    `【確認】${who} の ${startYmd} ～ ${endYmd} を
+    「確定シフト＋レジ全削除 → 提出snapshotで再構成」します。
 
-    おおよその影響（現在ロード中日の概算）：
-    - 削除対象の確定シフト：約 ${shifts} 件
-    - 削除対象のレジ割当：約 ${regs} 件
-    - 追加される確定シフト（希望の数）：約 ${wishes} 件
+    影響（サーバ算出）：
+    - 削除対象の確定シフト： ${shifts} 件
+    - 削除対象のレジ割当： ${regs} 件
+    - 追加される確定シフト（提出snapshot）： ${wishes} 件
+    - 発見された休みの数： ${holiday_rows} 件
+    - 発見された時間帯の数： ${time_rows} 件
+    - 発見された ${sub_cnt} 件のシフト提出
 
     この操作は未保存の変更として蓄積されます。`;
       return await promptTypedConfirm(msg, 'RESET');
@@ -2491,6 +2574,12 @@
         alert('期間を指定してください');
         return;
       }
+       // ★ ここで periodId も必須にする
+      const periodId = getSelectedPeriodId();
+      if (!periodId) {
+        alert('募集期間を選択してください');
+        return;
+      }
 
       // 影響件数の概算ダイアログ（いままでの confirmBulkResetSafely をそのまま使ってOK）
       const ok = await confirmBulkResetSafely(start, end, null); // staffIdOrNull = null → 全員
@@ -2501,12 +2590,13 @@
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'X-CSRFToken': '{{ csrf_token }}',
+            'X-CSRFToken': csrfToken(),
           },
           body: JSON.stringify({
+            period_id: periodId, // ← ★追加必須
             start: start,
             end: end,
-            staff_id: null,   // 全員
+            staff_id: null,
           }),
         });
 
@@ -2536,15 +2626,25 @@
 
     /* ===== スタッフ名クリックでモーダル表示 ===== */
     document.addEventListener('click', e => {
-      if (!e.target.classList.contains('staff-label')) return;
+      const el = e.target.closest('.staff-label');
+      if (!el) return;
 
-      const id = e.target.dataset.id;
-      const name = e.target.dataset.name;
+      const id = el.dataset.staffId;
+      const name = el.dataset.name;
 
-      // 毎回、「次の半月」の期間をセット
-      const range = getNextHalfMonthRange();
-      modalStart.value = range.start;
-      modalEnd.value = range.end;
+      // ✅ 全体と同じ「反映対象期間」を初期値にする
+      modalStart.value = document.getElementById('startDate').value;
+      modalEnd.value   = document.getElementById('endDate').value;
+
+      // もし start/end が未入力なら、periodSelect の data-start/data-end を使う
+      if (!modalStart.value || !modalEnd.value) {
+        const sel = document.getElementById('periodSelect');
+        const opt = sel?.selectedOptions?.[0];
+        if (opt) {
+          modalStart.value = opt.getAttribute('data-start') || '';
+          modalEnd.value   = opt.getAttribute('data-end')   || '';
+        }
+      }
 
       modal.dataset.staffId = id;
       modalTitle.textContent = `📋 ${name} のシフト希望を反映`;
@@ -2555,11 +2655,22 @@
     // 📋 指定スタッフの希望どおりにリセット（サーバ側で実行）
     modalApply.addEventListener('click', async () => {
       const staffId = Number(modal.dataset.staffId);  // モーダルを開くときに dataset.staffId に入れてあるやつ
+      if (!Number.isFinite(staffId) || staffId <= 0) {
+        alert('staffId の取得に失敗しました（modal.dataset.staffId を確認）');
+        return;
+      }
       const start = modalStart.value;
       const end = modalEnd.value;
 
       if (!start || !end) {
         alert('期間を入力してください');
+        return;
+      }
+
+      // ★ ここで periodId も必須にする
+      const periodId = getSelectedPeriodId();
+      if (!periodId) {
+        alert('募集期間を選択してください');
         return;
       }
 
@@ -2572,17 +2683,27 @@
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'X-CSRFToken': '{{ csrf_token }}',
+            'X-CSRFToken': csrfToken(),
           },
           body: JSON.stringify({
+            period_id: periodId,  // ← ★追加必須
             start: start,
             end: end,
             staff_id: staffId,
           }),
         });
 
+        if (!res.ok) {
+          const txt = await res.text();
+          console.error('bulk-reset-to-wish failed', res.status, txt);
+          alert(`失敗: HTTP ${res.status}`);
+          return;
+        }
+
+
+
         const data = await res.json();
-        if (!res.ok || !data.success) {
+        if (!data.success) {
           alert(data.error || '一括リセットに失敗しました。');
           return;
         }
