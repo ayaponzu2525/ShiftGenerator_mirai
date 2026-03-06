@@ -456,7 +456,7 @@ def save_register_assignments(request):
 
     except Exception as e:
         return JsonResponse({'success': False, 'error': str(e)})
-
+    
 @require_POST
 @user_passes_test(lambda u: u.is_superuser)
 def save_shift_and_registers(request):
@@ -477,19 +477,19 @@ def save_shift_and_registers(request):
     normalized_registers = {}
     versions = {}
 
+    # シフトの正規化と同時に、レジの正規化も行う
     def parse_iso_to_local(value):
         dt = datetime.fromisoformat(str(value).replace('Z', ''))
         if dt.tzinfo is None:
             dt = timezone.make_aware(dt, pytz.UTC)
         return dt.astimezone(timezone.get_current_timezone())
-    
+    # 曜日オブジェクトの安全な取得（存在しない場合は None）
     def get_day_obj_safe(d):
         try:
             return DayOfWeek.objects.get(day_number=d.weekday())
         except DayOfWeek.DoesNotExist:
-            return None  # day_of_week が必須ならここで ValidationError を返す運用でもOK
-
-    # === 営業時間にシフト時間を丸める（サーバー側） ===
+            return None
+    # シフト時間を営業時間内にクランプする関数
     def clamp_shift_times_to_business_hours(start_time, end_time):
         """
         start_time, end_time: datetime.time
@@ -498,23 +498,81 @@ def save_shift_and_registers(request):
         if start_time is None or end_time is None:
             return start_time, end_time
 
-        # まず単純に 8:00〜20:00 に切り詰める
         s = max(start_time, BUSINESS_OPEN_TIME)
-        e = min(end_time,   BUSINESS_CLOSE_TIME)
+        e = min(end_time, BUSINESS_CLOSE_TIME)
 
-        # 万一 0分以下になった場合の保険（普通の操作ではほぼ来ない前提）
         if e <= s:
             base_date = date.today()
-            # とりあえず「1時間だけ確保」しておく
             s_dt = datetime.combine(base_date, s)
             e_dt = s_dt + timedelta(hours=1)
-            # 20:00 を超えないように再度 clamp
             if e_dt.time() > BUSINESS_CLOSE_TIME:
                 e_dt = datetime.combine(base_date, BUSINESS_CLOSE_TIME)
                 s_dt = e_dt - timedelta(hours=1)
             s, e = s_dt.time(), e_dt.time()
 
         return s, e
+    # item から submission_period を安全に読み取る関数
+    def parse_submission_period_from_item(item, action):
+        """
+        itemごとの submission_period_id を読む。
+        add / move / update では必須。
+        """
+        if action not in ('add', 'move', 'update'):
+            return None, None
+
+        raw_id = item.get('submission_period_id')
+
+        if raw_id in (None, ''):
+            return None, JsonResponse(
+                {'success': False, 'error': '追加先の募集期間を選択してください。'},
+                status=400
+            )
+
+        try:
+            period_id = int(raw_id)
+        except (TypeError, ValueError):
+            return None, JsonResponse(
+                {'success': False, 'error': '募集期間IDが不正です。'},
+                status=400
+            )
+
+        try:
+            period = ShiftSubmissionPeriod.objects.get(id=period_id)
+        except ShiftSubmissionPeriod.DoesNotExist:
+            return None, JsonResponse(
+                {'success': False, 'error': '指定された募集期間が存在しません。'},
+                status=400
+            )
+
+        return period, None
+    
+    def is_shift_within_submission_period(period, shift_date, start_time, end_time, staff_name='スタッフ'):
+        """
+        shift_date: datetime.date
+        start_time, end_time: datetime.time
+        """
+        if period is None:
+            return False, f'{staff_name} の追加先募集期間が指定されていません。'
+
+        # 日付範囲チェック
+        if shift_date < period.start_date or shift_date > period.end_date:
+            return False, (
+                f'{staff_name} のシフト日付 {shift_date} は、'
+                f'選択した募集期間「{period.label}」の外です。'
+            )
+
+        # start_time/end_time が両方ある時だけ厳密チェック
+        if period.start_time and period.end_time:
+            if start_time < period.start_time or end_time > period.end_time:
+                return False, (
+                    f'{staff_name} のシフト時間 '
+                    f'{start_time.strftime("%H:%M")}〜{end_time.strftime("%H:%M")} は、'
+                    f'選択した募集期間「{period.label}」の受付時間 '
+                    f'{period.start_time.strftime("%H:%M")}〜{period.end_time.strftime("%H:%M")} の外です。'
+                )
+
+        return True, None
+
     try:
         with transaction.atomic():
             touched_shift_ids = set()
@@ -533,6 +591,26 @@ def save_shift_and_registers(request):
                 start_time = end_time = None
                 shift_date = None
 
+                submission_period = None
+                if action in ('add', 'move', 'update'):
+                    submission_period, error_response = parse_submission_period_from_item(item, action)
+                    if error_response:
+                        return error_response
+
+                new_staff = item.get('group')
+                if new_staff is not None:
+                    try:
+                        new_staff = int(new_staff)
+                    except (TypeError, ValueError):
+                        return JsonResponse({'success': False, 'error': 'スタッフIDが不正です。'}, status=400)
+
+                staff_name = 'スタッフ'
+                if new_staff is not None:
+                    try:
+                        staff_name = Staff.objects.get(id=new_staff).name
+                    except Staff.DoesNotExist:
+                        staff_name = 'スタッフ'
+
                 if action in ('add', 'move', 'update'):
                     if not start_iso or not end_iso:
                         return JsonResponse({'success': False, 'error': 'シフトの開始・終了時刻が不足しています。'}, status=400)
@@ -545,27 +623,31 @@ def save_shift_and_registers(request):
                     shift_date = start_dt.date()
                     start_time = start_dt.time()
                     end_time = end_dt.time()
-                    
-                    # ★ サーバー側でも営業時間に自動クランプ
+
                     start_time, end_time = clamp_shift_times_to_business_hours(start_time, end_time)
 
-                new_staff = item.get('group')
-                if new_staff is not None:
-                    try:
-                        new_staff = int(new_staff)
-                    except (TypeError, ValueError):
-                        return JsonResponse({'success': False, 'error': 'スタッフIDが不正です。'}, status=400)
+                    ok, err = is_shift_within_submission_period(
+                        submission_period,
+                        shift_date,
+                        start_time,
+                        end_time,
+                        staff_name=staff_name,
+                    )
+                    if not ok:
+                        return JsonResponse({'success': False, 'error': err}, status=400)
 
                 if action == 'add':
                     if new_staff is None:
                         return JsonResponse({'success': False, 'error': 'スタッフ情報が不足しています。'}, status=400)
+
                     day_obj = get_day_obj_safe(shift_date)
                     shift = ShiftPreference.objects.create(
                         staff_id=new_staff,
                         date=shift_date,
                         confirmed_starttime=start_time,
                         confirmed_endtime=end_time,
-                        day_of_week=day_obj
+                        day_of_week=day_obj,
+                        submission_period=submission_period,
                     )
                     shift_map[shift.id] = shift
                     touched_shift_ids.add(shift.id)
@@ -585,7 +667,7 @@ def save_shift_and_registers(request):
                     if new_staff is not None and shift.staff_id != new_staff:
                         shift.confirmed_starttime = None
                         shift.confirmed_endtime = None
-                        shift.save()
+                        shift.save(update_fields=['confirmed_starttime', 'confirmed_endtime'])
 
                         day_obj = get_day_obj_safe(shift_date)
                         new_shift = ShiftPreference.objects.create(
@@ -593,14 +675,24 @@ def save_shift_and_registers(request):
                             date=shift_date,
                             confirmed_starttime=start_time,
                             confirmed_endtime=end_time,
-                            day_of_week=day_obj
+                            day_of_week=day_obj,
+                            submission_period=submission_period,
                         )
                         shift_map[new_shift.id] = new_shift
                         touched_shift_ids.add(new_shift.id)
                     else:
                         shift.confirmed_starttime = start_time
                         shift.confirmed_endtime = end_time
-                        shift.save()
+                        shift.submission_period = submission_period
+                        shift.day_of_week = get_day_obj_safe(shift_date)
+                        shift.date = shift_date
+                        shift.save(update_fields=[
+                            'confirmed_starttime',
+                            'confirmed_endtime',
+                            'submission_period',
+                            'day_of_week',
+                            'date',
+                        ])
 
                 elif action == 'remove' and item_id is not None:
                     try:
@@ -611,8 +703,54 @@ def save_shift_and_registers(request):
                     shift_map[shift.id] = shift
                     shift.confirmed_starttime = None
                     shift.confirmed_endtime = None
-                    shift.save()
+                    shift.save(update_fields=['confirmed_starttime', 'confirmed_endtime'])
                     touched_shift_ids.add(shift.id)
+
+            # 同一スタッフの時間被りチェック（period関係なく）
+            touched_shifts = [s for s in shift_map.values() if s and s.confirmed_starttime and s.confirmed_endtime]
+            checked_pairs = set()
+
+            for shift in touched_shifts:
+                same_day_qs = ShiftPreference.objects.filter(
+                    staff_id=shift.staff_id,
+                    date=shift.date,
+                    confirmed_starttime__isnull=False,
+                    confirmed_endtime__isnull=False,
+                ).exclude(id=shift.id)
+
+                for other in same_day_qs:
+                    pair_key = tuple(sorted([shift.id, other.id]))
+                    if pair_key in checked_pairs:
+                        continue
+                    checked_pairs.add(pair_key)
+
+                    if time_overlap(
+                        shift.confirmed_starttime, shift.confirmed_endtime,
+                        other.confirmed_starttime, other.confirmed_endtime
+                    ):
+                        staff_name = getattr(getattr(shift, 'staff', None), 'name', 'スタッフ')
+                        msg = (
+                            f'{shift.date} {staff_name} のシフト重複：'
+                            f'({shift.confirmed_starttime.strftime("%H:%M")}〜{shift.confirmed_endtime.strftime("%H:%M")}) と '
+                            f'({other.confirmed_starttime.strftime("%H:%M")}〜{other.confirmed_endtime.strftime("%H:%M")}) が重なっています'
+                        )
+                        conflict = {
+                            'shift_id': shift.id,
+                            'type': 'staff_shift_overlap',
+                            'a': {
+                                'id': shift.id,
+                                'start': shift.confirmed_starttime.strftime('%H:%M'),
+                                'end': shift.confirmed_endtime.strftime('%H:%M'),
+                                'submission_period_id': shift.submission_period_id,
+                            },
+                            'b': {
+                                'id': other.id,
+                                'start': other.confirmed_starttime.strftime('%H:%M'),
+                                'end': other.confirmed_endtime.strftime('%H:%M'),
+                                'submission_period_id': other.submission_period_id,
+                            },
+                        }
+                        return JsonResponse({'success': False, 'error': msg, 'conflicts': [conflict]})
 
             register_shift_ids = set()
             for key in registers_payload.keys():
@@ -636,8 +774,7 @@ def save_shift_and_registers(request):
                 norm_list = []
 
                 clamp_start = shift.confirmed_starttime or getattr(shift, 'starttime', None)
-                clamp_end   = shift.confirmed_endtime   or getattr(shift, 'endtime', None)
-
+                clamp_end = shift.confirmed_endtime or getattr(shift, 'endtime', None)
 
                 for entry in assignments:
                     try:
@@ -655,8 +792,9 @@ def save_shift_and_registers(request):
                         end_t = clamp_end
                     if start_t >= end_t:
                         continue
+
                     start_dt = datetime.combine(shift.date, start_t)
-                    end_dt   = datetime.combine(shift.date, end_t)
+                    end_dt = datetime.combine(shift.date, end_t)
                     duration_minutes = int((end_dt - start_dt).total_seconds() // 60)
                     if duration_minutes < 5:
                         continue
@@ -721,7 +859,6 @@ def save_shift_and_registers(request):
                             }
                             return JsonResponse({'success': False, 'error': msg, 'conflicts': [conflict]})
 
-                # 他スタッフ（同一日・同一レジ番号）との重複チェック
                 for record in norm_list:
                     qs = (
                         ShiftRegisterAssignment.objects
@@ -734,8 +871,10 @@ def save_shift_and_registers(request):
                     )
 
                     for existed in qs:
-                        if time_overlap(record['start'], record['end'],
-                                        existed.register_start_time, existed.register_end_time):
+                        if time_overlap(
+                            record['start'], record['end'],
+                            existed.register_start_time, existed.register_end_time
+                        ):
                             other_staff = getattr(getattr(existed.shift, 'staff', None), 'name', 'スタッフ')
                             msg = (
                                 f'{shift.date} のレジ{record["register_number"]} は '
@@ -794,10 +933,11 @@ def save_shift_and_registers(request):
                 normalized_shifts.append({
                     'id': shift.id,
                     'start': start_val,
-                    'end': end_val
+                    'end': end_val,
+                    'submission_period_id': shift.submission_period_id,
                 })
 
-    except Exception as exc:
+    except Exception:
         logger.exception('save_shift_and_registers error')
         return JsonResponse({'success': False, 'error': '保存に失敗しました。もう一度お試しください。'})
 

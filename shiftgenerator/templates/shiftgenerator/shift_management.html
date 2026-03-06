@@ -461,43 +461,63 @@ function csrfToken() {
 
       // ====== 新規シフト(add)に対する move/update は「addの中身を書き換える」 ======
       if (isNewShift && (action === 'update' || action === 'move')) {
-        const key = String(id || '');
+      const key = String(id || '');
 
-        const addIndex = changes.findIndex(ch =>
-          ch.action === 'add' &&
-          ch.item &&
-          String(ch.item.tmp_id || '') === key
-        );
+      const addIndex = changes.findIndex(ch =>
+        ch.action === 'add' &&
+        ch.item &&
+        String(ch.item.tmp_id || '') === key
+      );
 
-        if (addIndex >= 0) {
-          const payload = normalizeAddItem(item);  // 新しい時間で再生成
-          changes[addIndex] = { action: 'add', item: payload };
-          console.log('Merged into ADD (new shift moved):', changes[addIndex]);
-          updateUnsavedIndicator();
-          return;   // ★ update としてはサーバに送らない
-        }
-        // 見つからなければ、下の通常ロジックにフォールバック
+      if (addIndex >= 0) {
+        const oldAdd = changes[addIndex].item || {};
+
+        const payload = {
+          ...normalizeAddItem(item),
+          // ★ 最初に作ったときの period を維持
+          submission_period_id: oldAdd.submission_period_id,
+        };
+
+        changes[addIndex] = { action: 'add', item: payload };
+        console.log('Merged into ADD (new shift moved):', changes[addIndex]);
+        updateUnsavedIndicator();
+        return;
       }
+    }
 
       // ====== ここから下は「既存シフト(DBにある白いシフト)」用 ======
-      const existingIndex = changes.findIndex(change => change.item.id === item.id);
+      const payload = normalizeExistingItem(item);
+      const existingIndex = changes.findIndex(change => String(change.item.id) === String(payload.id));
 
       if (existingIndex >= 0) {
         // 既に存在している場合は上書き
-        changes[existingIndex] = { action: action, item: item };
+        changes[existingIndex] = { action: action, item: payload };
       } else {
         // 新しいエントリを追加
-        changes.push({ action: action, item: item });
+        changes.push({ action: action, item: payload });
       }
 
       console.log('Current changes:', changes);
       updateUnsavedIndicator();
     }
 
-    // 募集期間セレクトの値を取得する関数
+    // 募集期間の選択値を取得する関数
     function getSelectedPeriodId() {
+      // まず新仕様のラジオを優先
+      const checkedRadio = document.querySelector('input[name="periodSelect"]:checked');
+      if (checkedRadio) {
+        const v = parseInt(checkedRadio.value, 10);
+        return Number.isNaN(v) ? null : v;
+      }
+
+      // 旧仕様の select にも対応
       const el = document.getElementById('periodSelect');
-      return el ? parseInt(el.value, 10) : null;
+      if (el) {
+        const v = parseInt(el.value, 10);
+        return Number.isNaN(v) ? null : v;
+      }
+
+      return null;
     }
 
     // 指定の日付（YYYY-MM-DD）にリダイレクトする関数（反映に使う）
@@ -1798,15 +1818,28 @@ function csrfToken() {
       return `${y}-${m}-${da}T${hh}:${mm}:${ss}${sign}${oh}:${om}`; // 例: ...T09:00:00+09:00
     }
 
-    // 受け取った item を {tmp_id, group, start, end} に正規化（常にオフセット付き）
+    // 受け取った item を {tmp_id, group, start, end, submission_period_id} に正規化
     function normalizeAddItem(raw) {
       const i = Array.isArray(raw) ? raw[0] : raw;
       return {
-        // ★ vis がくれた一時IDをクライアント専用で保持（サーバには送らない）
         tmp_id: String(i.id || ''),
         group: Number(i.group),
         start: toLocalISOWithOffset(i.start),
         end: toLocalISOWithOffset(i.end),
+        submission_period_id: i.submission_period_id ?? getSelectedPeriodId(),
+      };
+    }
+
+    // 既存シフト用の payload 正規化（idを数値化して、日時をローカルISOに）
+    function normalizeExistingItem(raw) {
+      const i = Array.isArray(raw) ? raw[0] : raw;
+      return {
+        ...i,
+        id: i.id,
+        group: Number(i.group),
+        start: toLocalISOWithOffset(i.start),
+        end: toLocalISOWithOffset(i.end),
+        submission_period_id: i.submission_period_id ?? getSelectedPeriodId(),
       };
     }
 
