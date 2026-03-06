@@ -1,7 +1,7 @@
 from django.http import HttpResponse, JsonResponse, HttpResponseServerError, HttpResponseRedirect, HttpResponseForbidden, HttpResponseNotAllowed
 from django.urls import reverse
 from django.views.decorators.csrf import csrf_exempt
-from django.db import transaction
+from django.db import transaction, IntegrityError
 from django.conf import settings
 from django.contrib.auth import login as auth_login, authenticate
 from django.contrib.auth.forms import AuthenticationForm
@@ -1024,16 +1024,22 @@ def shift_management_view(request):
             url = reverse("shiftgenerator:shift-management-view")
             return redirect(f"{url}?open=create&dup=1")
 
-        ShiftSubmissionPeriod.objects.create(
-            label=label,
-            start_date=start_date,
-            end_date=end_date,
-            type=type_,
-            is_active=True,
-            start_time=start_time,
-            end_time=end_time,
-            auto_close_date=auto_close_date,
-        )
+        try:
+            ShiftSubmissionPeriod.objects.create(
+                label=label,
+                start_date=start_date,
+                end_date=end_date,
+                type=type_,
+                is_active=True,
+                start_time=start_time,
+                end_time=end_time,
+                auto_close_date=auto_close_date,
+            )
+        except IntegrityError:
+            messages.error(request, "同じ種類・同じ開始日/終了日の募集期間が既に存在します。")
+            url = reverse("shiftgenerator:shift-management-view")
+            return redirect(f"{url}?open=create")
+
         messages.success(request, "新しい募集期間を作成しました。")
         return redirect("shiftgenerator:shift-management-view")
 
@@ -1669,6 +1675,12 @@ def bulk_reset_preview(request):
     end   = parse_date(payload.get("end"))   if payload.get("end")   else period.end_date
     if not start or not end or start > end:
         return JsonResponse({"success": False, "error": "日付範囲が不正です。"}, status=400)
+    
+    if start < period.start_date or end > period.end_date:
+        return JsonResponse({
+            "success": False,
+            "error": f"募集期間内を指定してください。（募集期間: {period.start_date}〜{period.end_date}）"
+        }, status=400)
 
     # period内に丸める
     if start < period.start_date: start = period.start_date
@@ -1701,11 +1713,6 @@ def bulk_reset_preview(request):
     wishes = 0
     holiday_rows = 0
     time_rows = 0
-    
-    print("staff_id payload:", staff_id)
-    print("staff_qs ids:", list(staff_qs.values_list("id", flat=True)))
-    print("submission staff ids:", list(ShiftSubmission.objects.filter(period=period).values_list("staff_id", flat=True)))
-    submissions = ShiftSubmission.objects.filter(period=period, staff__in=staff_qs)
 
     for sub in submissions:
         snap = sub.snapshot or []
@@ -1770,12 +1777,18 @@ def bulk_reset_to_wish(request):
 
     if not start or not end or start > end:
         return JsonResponse({"success": False, "error": "日付範囲が不正です。"}, status=400)
+    
+    if start < period.start_date or end > period.end_date:
+        return JsonResponse({
+            "success": False,
+            "error": f"募集期間内を指定してください。（募集期間: {period.start_date}〜{period.end_date}）"
+        }, status=400)
 
     if start < period.start_date:
         start = period.start_date
     if end > period.end_date:
         end = period.end_date
-
+    
     staff_id = payload.get("staff_id")
 
     staff_qs = Staff.objects.filter(is_active=True)

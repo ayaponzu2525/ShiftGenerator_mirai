@@ -500,6 +500,18 @@ function csrfToken() {
       return el ? parseInt(el.value, 10) : null;
     }
 
+    // 指定の日付（YYYY-MM-DD）にリダイレクトする関数（反映に使う）
+    function redirectToDate(dateYmd, periodId) {
+      if (!dateYmd) {
+        window.location.reload();
+        return;
+      }
+      const url = new URL(window.location.href);
+      url.searchParams.set('date', dateYmd);
+      if (periodId) url.searchParams.set('period_id', String(periodId));
+      window.location.href = url.toString();
+    }
+
     // periodを変えたら start/end をそのperiodの範囲に自動セット
     document.addEventListener('DOMContentLoaded', () => {
       // periodを変えたら start/end をそのperiodの範囲に自動セット
@@ -2533,13 +2545,27 @@ function csrfToken() {
         }),
       });
 
-    if (!res.ok) {
-      const txt = await res.text();
-      console.error('bulk-reset-preview failed', res.status, txt);
-      alert(`bulk-reset-preview 失敗: HTTP ${res.status}`);
-      return false;
-    }
+      if (!res.ok) {
+        const ct = res.headers.get('content-type') || '';
+        let msg = `bulk-reset-preview 失敗: HTTP ${res.status}`;
 
+        try {
+          if (ct.includes('application/json')) {
+            const j = await res.json();
+            if (j?.error) msg = j.error;
+          } else {
+            const txt = await res.text();
+            msg = txt.slice(0, 300);
+          }
+        } catch (e) {}
+
+        alert(msg);
+
+        // ★期間外(400)は「そのまま」にしたいので遷移しない
+        // redirectToDate(startYmd, periodId); ←これ消す
+
+        return false;
+      }
       const data = await res.json();
       if (!data.success) {
         alert(data.error || '概算取得に失敗しました');
@@ -2607,7 +2633,7 @@ function csrfToken() {
         }
 
         alert(`一括リセットが完了しました（${data.count} 件更新）。\n画面を再読み込みします。`);
-        window.location.reload();
+        redirectToDate(start, periodId);
       } catch (e) {
         console.error(e);
         alert('通信エラーが発生しました。');
@@ -2712,7 +2738,7 @@ function csrfToken() {
 
         // いま表示中の日付だけ最新にしたいなら reload が一番楽
         alert(`指定スタッフのリセットが完了しました（${data.count} 件更新）。`);
-        window.location.reload();
+        redirectToDate(start, periodId);
       } catch (e) {
         console.error(e);
         alert('通信エラーが発生しました。');

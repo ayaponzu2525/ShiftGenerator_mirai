@@ -33,17 +33,41 @@
   <!-- ✅ Django messages 表示 -->
   <div class="container mt-3">
     {% if messages %}
+    <script>
+    document.addEventListener("DOMContentLoaded", function () {
+        {% for message in messages %}
+            {% if message.tags == "error" %}
+                alert("{{ message|escapejs }}");
+            {% endif %}
+        {% endfor %}
+    });
+    </script>
+
+    <div aria-live="polite" aria-atomic="true"
+        style="position: fixed; top: 16px; right: 16px; z-index: 2000; min-width: 280px;">
       {% for message in messages %}
-        <div class="alert
-                    {% if message.tags %}alert-{{ message.tags }}{% else %}alert-info{% endif %}
-                    alert-dismissible fade show"
-             role="alert">
-          {{ message }}
-          <button type="button" class="close" data-dismiss="alert" aria-label="Close">
-            <span aria-hidden="true">&times;</span>
-          </button>
-        </div>
+        {% if message.tags == "success" %}
+          <div class="toast" data-delay="3000" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="toast-header">
+              <strong class="mr-auto text-success">完了</strong>
+              <small>今</small>
+              <button type="button" class="ml-2 mb-1 close" data-dismiss="toast" aria-label="閉じる">
+                <span aria-hidden="true">&times;</span>
+              </button>
+            </div>
+            <div class="toast-body">
+              {{ message }}
+            </div>
+          </div>
+        {% endif %}
       {% endfor %}
+    </div>
+
+    <script>
+    $(function () {
+        $('.toast').toast('show');
+    });
+    </script>
     {% endif %}
   </div>
 

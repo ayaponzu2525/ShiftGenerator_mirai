@@ -163,6 +163,14 @@ class ShiftPreference(models.Model):
     confirmed_starttime = models.TimeField(null=True, blank=True)  # 確定開始時刻
     confirmed_endtime = models.TimeField(null=True, blank=True)  # 確定終了時刻
     
+    submission_period = models.ForeignKey(
+        'ShiftSubmissionPeriod',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='shift_preferences',
+        help_text='このシフトが属する募集期間（編集用）'
+    )
+    
     published_starttime = models.TimeField(null=True, blank=True) # 公開開始時刻
     published_endtime   = models.TimeField(null=True, blank=True) # 公開終了時刻
     published_at        = models.DateTimeField(null=True, blank=True) # 公開日時
@@ -232,26 +240,32 @@ class ShiftHistory(models.Model):
     def __str__(self):
         return f'{self.staff.name} - {self.starttime} to {self.endtime}'
 
-# シフト提出期間設定用
 class ShiftSubmissionPeriod(models.Model):
     TYPE_CHOICES = [
         ('default', 'デフォルト'),
         ('temporary', '臨時'),
         ('HELP', 'ヘルプ'),
     ]
-    label = models.CharField(max_length=64, blank=True)  # blank=Trueで空欄許可
+    label = models.CharField(max_length=64, blank=True)
     start_date = models.DateField()
     end_date = models.DateField()
-    start_time = models.TimeField(null=True, blank=True)  # 開始時刻
-    end_time = models.TimeField(null=True, blank=True)    # 終了時刻
+    start_time = models.TimeField(null=True, blank=True)
+    end_time = models.TimeField(null=True, blank=True)
     type = models.CharField(max_length=16, choices=TYPE_CHOICES, default='default')
-    auto_close_date = models.DateTimeField(null=True, blank=True)  # 締切日時。日付だけならDateFieldでもOK
+    auto_close_date = models.DateTimeField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['start_date', 'end_date', 'type'],
+                name='uniq_submission_period_range_type'
+            )
+        ]
+
     def save(self, *args, **kwargs):
-        # start_date, end_dateがstr型の場合は変換
         if isinstance(self.start_date, str):
             self.start_date = datetime.strptime(self.start_date, "%Y-%m-%d").date()
         if isinstance(self.end_date, str):
@@ -261,8 +275,7 @@ class ShiftSubmissionPeriod(models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.start_date.strftime('%Y年%m月%d日')}～{self.end_date.strftime('%m月%d日')}"
-    
+        return f"{self.start_date.strftime('%Y年%m月%d日')}～{self.end_date.strftime('%m月%d日')}" 
     
 class ShiftSubmission(models.Model):
     class Meta:
