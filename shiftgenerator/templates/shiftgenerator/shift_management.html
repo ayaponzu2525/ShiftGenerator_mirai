@@ -186,8 +186,33 @@
       {% endfor %}
     </select>
   </div>
+  <!-- 追加先選択< -->
+  <div class="mt-3 mb-2 p-2 border rounded bg-white" style="max-width: 900px;">
+    <div class="d-flex align-items-ce>nter flex-wrap" style="gap: 12px;">
+      <label class="mb-0 mr-2"><strong>追加先：</strong></label>
 
-  
+      <label class="mb-0">
+        <input type="radio" name="addPeriodType" value="default">
+        DEFAULT
+      </label>
+
+      <label class="mb-0">
+        <input type="radio" name="addPeriodType" value="HELP">
+        HELP
+      </label>
+
+      <label class="mb-0">
+        <input type="radio" name="addPeriodType" value="temporary">
+        TEMP
+      </label>
+
+      <select id="addPeriodSelect" class="form-control form-control-sm" style="max-width: 420px; display:inline-block;">
+        <option value="">-- この日に追加できる募集期間を選択 --</option>
+      </select>
+
+      <span id="addPeriodHint" class="text-muted small"></span>
+    </div>
+  </div>  
 
   <!-- ナビゲーション -->
   <div class="btn-group-custom">
@@ -292,6 +317,8 @@
     const extraPadding = 60;
     const timelineHeight = staffCount * rowHeight + extraPadding;
     document.getElementById('timeline').style.height = timelineHeight + 'px';
+
+    const ALL_PERIODS = JSON.parse('{{ periods_json|escapejs }}'); // すべての募集期間データ（id, label, start_date, end_date, type, is_active）
 
     // グループデータ（スタッフ）
     const groups = new vis.DataSet([
@@ -444,9 +471,14 @@ function csrfToken() {
 
       // ====== add ======
       if (action === 'add') {
-        const payload = normalizeAddItem(item); // {tmp_id, group, start, end}
+        let payload;
+        try {
+          payload = normalizeAddItem(item);
+        } catch (e) {
+          alert(e.message || '追加先の募集期間を選択してください');
+          return;
+        }
 
-        // すでに同一内容の add があるなら置換（多重登録防止）
         const idx = changes.findIndex(ch => ch.action === 'add' && sameAdd(ch.item, payload));
         if (idx < 0) {
           changes.push({ action: 'add', item: payload });
@@ -520,6 +552,128 @@ function csrfToken() {
       return null;
     }
 
+    function getCurrentEditingDate() {
+      return document.getElementById('date')?.value || selectedDate || null;
+    }
+
+    function getAddSelectedPeriodId() {
+      const el = document.getElementById('addPeriodSelect');
+      if (!el || !el.value) return null;
+      const v = parseInt(el.value, 10);
+      return Number.isNaN(v) ? null : v;
+    }
+
+    function getCheckedAddPeriodType() {
+      const el = document.querySelector('input[name="addPeriodType"]:checked');
+      return el ? el.value : null;
+    }
+
+    function getPeriodsForDate(dateStr) {
+      if (!dateStr) return [];
+      return ALL_PERIODS.filter(p => {
+        return p.is_active && p.start_date <= dateStr && dateStr <= p.end_date;
+      });
+    }
+
+    function chooseDefaultAddType(periods) {
+      if (periods.some(p => p.type === 'default')) return 'default';
+      if (periods.some(p => p.type === 'HELP')) return 'HELP';
+      if (periods.some(p => p.type === 'temporary')) return 'temporary';
+      return null;
+    }
+
+    function formatAddPeriodLabel(p) {
+      const typeLabel =
+        p.type === 'default' ? 'DEFAULT' :
+        p.type === 'HELP' ? 'HELP' :
+        p.type === 'temporary' ? 'TEMP' :
+        p.type;
+
+      const timePart = (p.start_time || p.end_time)
+        ? ` / ${p.start_time || '--:--'}〜${p.end_time || '--:--'}`
+        : '';
+
+      return `[${typeLabel}] ${p.label || '無題'}（${p.start_date}〜${p.end_date}${timePart}）`;
+    }
+
+    function rebuildAddPeriodSelect(preferredPeriodId = null) {
+      const dateStr = getCurrentEditingDate();
+      const allForDate = getPeriodsForDate(dateStr);
+
+      const radios = {
+        default: document.querySelector('input[name="addPeriodType"][value="default"]'),
+        HELP: document.querySelector('input[name="addPeriodType"][value="HELP"]'),
+        temporary: document.querySelector('input[name="addPeriodType"][value="temporary"]'),
+      };
+
+      radios.default.disabled = !allForDate.some(p => p.type === 'default');
+      radios.HELP.disabled = !allForDate.some(p => p.type === 'HELP');
+      radios.temporary.disabled = !allForDate.some(p => p.type === 'temporary');
+
+      let checkedType = getCheckedAddPeriodType();
+      if (!checkedType || !allForDate.some(p => p.type === checkedType)) {
+        checkedType = chooseDefaultAddType(allForDate);
+        if (checkedType && radios[checkedType]) {
+          radios[checkedType].checked = true;
+        }
+      }
+
+      const filtered = checkedType
+        ? allForDate.filter(p => p.type === checkedType)
+        : allForDate;
+
+      const sel = document.getElementById('addPeriodSelect');
+      const hint = document.getElementById('addPeriodHint');
+      if (!sel) return;
+
+      sel.innerHTML = '';
+
+      if (!filtered.length) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = '-- この日に追加できる募集期間はありません --';
+        sel.appendChild(opt);
+        sel.disabled = true;
+        if (hint) hint.textContent = '';
+        return;
+      }
+
+      sel.disabled = false;
+
+      filtered.forEach((p) => {
+        const opt = document.createElement('option');
+        opt.value = String(p.id);
+        opt.textContent = formatAddPeriodLabel(p);
+        opt.dataset.type = p.type;
+        sel.appendChild(opt);
+      });
+
+      const samePeriodExists = preferredPeriodId && filtered.some(p => Number(p.id) === Number(preferredPeriodId));
+      if (samePeriodExists) {
+        sel.value = String(preferredPeriodId);
+      } else {
+        sel.selectedIndex = 0;
+      }
+
+      const selectedText = sel.selectedOptions?.[0]?.textContent || '';
+      if (hint) hint.textContent = selectedText ? `選択中: ${selectedText}` : '';
+    }
+
+    function syncAddPeriodUiFromMainPeriod() {
+      const mainPeriodId = getSelectedPeriodId(); // 既存の募集期間セレクト
+      const dateStr = getCurrentEditingDate();
+      const allForDate = getPeriodsForDate(dateStr);
+
+      const matched = allForDate.find(p => Number(p.id) === Number(mainPeriodId));
+      if (matched) {
+        const radio = document.querySelector(`input[name="addPeriodType"][value="${matched.type}"]`);
+        if (radio) radio.checked = true;
+        rebuildAddPeriodSelect(mainPeriodId);
+      } else {
+        rebuildAddPeriodSelect(null);
+      }
+    }
+
     // 指定の日付（YYYY-MM-DD）にリダイレクトする関数（反映に使う）
     function redirectToDate(dateYmd, periodId) {
       if (!dateYmd) {
@@ -532,24 +686,41 @@ function csrfToken() {
       window.location.href = url.toString();
     }
 
-    // periodを変えたら start/end をそのperiodの範囲に自動セット
+    // periodSelect の選択が変わったときに、対応する日付範囲を startDate と endDate に反映させる
     document.addEventListener('DOMContentLoaded', () => {
-      // periodを変えたら start/end をそのperiodの範囲に自動セット
       const sel = document.getElementById('periodSelect');
       if (!sel) return;
-
+      
       function applyPeriodRangeFromSelected() {
         const opt = sel.selectedOptions[0];
+        if (!opt) return;
+
         const ps = opt.getAttribute('data-start');
         const pe = opt.getAttribute('data-end');
-        document.getElementById('startDate').value = ps;
-        document.getElementById('endDate').value = pe;
+        document.getElementById('startDate').value = ps || '';
+        document.getElementById('endDate').value = pe || '';
       }
 
-      sel.addEventListener('change', applyPeriodRangeFromSelected);
+      sel.addEventListener('change', () => {
+        applyPeriodRangeFromSelected();
+        syncAddPeriodUiFromMainPeriod();
+      });
 
-      // ★初期表示時にも反映（これ大事）
+      document.querySelectorAll('input[name="addPeriodType"]').forEach(radio => {
+        radio.addEventListener('change', () => rebuildAddPeriodSelect());
+      });
+
+      const addSel = document.getElementById('addPeriodSelect');
+      const hint = document.getElementById('addPeriodHint');
+      if (addSel && hint) {
+        addSel.addEventListener('change', () => {
+          const txt = addSel.selectedOptions?.[0]?.textContent || '';
+          hint.textContent = txt ? `選択中: ${txt}` : '';
+        });
+      }
+
       applyPeriodRangeFromSelected();
+      syncAddPeriodUiFromMainPeriod();
     });
 
     function pushRemoveRegChange(shiftId, regId) {
@@ -856,6 +1027,13 @@ function csrfToken() {
         try {
           const allowAdd = isCtrlDrag || ctrlHeld;
           if (!allowAdd) { callback(null); return; }
+
+          const addPeriodId = getAddSelectedPeriodId();
+          if (!addPeriodId) {
+            alert('追加先の募集期間を選択してください。');
+            callback(null);
+            return;
+          }
 
           item.className = 'new-shift';
 
@@ -1819,14 +1997,18 @@ function csrfToken() {
     }
 
     // 受け取った item を {tmp_id, group, start, end, submission_period_id} に正規化
-    function normalizeAddItem(raw) {
-      const i = Array.isArray(raw) ? raw[0] : raw;
+    function normalizeAddItem(item) {
+      const addPeriodId = getAddSelectedPeriodId();
+      if (!addPeriodId) {
+        throw new Error('追加先の募集期間が未選択です');
+      }
+
       return {
-        tmp_id: String(i.id || ''),
-        group: Number(i.group),
-        start: toLocalISOWithOffset(i.start),
-        end: toLocalISOWithOffset(i.end),
-        submission_period_id: i.submission_period_id ?? getSelectedPeriodId(),
+        tmp_id: String(item.id),
+        group: Number(item.group),
+        start: toLocalISOWithOffset(item.start),
+        end: toLocalISOWithOffset(item.end),
+        submission_period_id: addPeriodId,
       };
     }
 

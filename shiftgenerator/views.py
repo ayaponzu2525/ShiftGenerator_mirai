@@ -1782,6 +1782,19 @@ def shift_management(request):
             'register_number': reg.register_number, 
         })
         
+    periods_payload = []
+    for p in periods:
+        periods_payload.append({
+            'id': p.id,
+            'label': p.label or '',
+            'type': p.type,
+            'start_date': p.start_date.isoformat(),
+            'end_date': p.end_date.isoformat(),
+            'start_time': p.start_time.strftime('%H:%M') if p.start_time else '',
+            'end_time': p.end_time.strftime('%H:%M') if p.end_time else '',
+            'is_active': bool(p.is_active),
+        })
+
     context = {
         'preferences': preferences,
         'staff': staff,
@@ -1791,6 +1804,7 @@ def shift_management(request):
         'register_assignments': register_data,
         'periods': periods,
         'selected_period_id': selected_period_id,
+        'periods_json': json.dumps(periods_payload, ensure_ascii=False),
     }
     return render(request, 'shiftgenerator/shift_management.html', context)
 
