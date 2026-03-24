@@ -1688,6 +1688,21 @@ def api_shift_items(request):
 
     shift_items = []
     for p in preferences:
+        period = p.submission_period
+        period_type = getattr(period, 'type', None)
+        period_label = getattr(period, 'label', '') or ''
+
+        if period_type == 'HELP':
+            period_short = 'HELP'
+            period_class = 'period-help'
+        elif period_type == 'temporary':
+            period_short = 'TEMP'
+            period_class = 'period-temporary'
+        elif period_type == 'default':
+            period_short = 'DEFAULT'
+            period_class = 'period-default'
+        else:
+            period_short = ''
         shift_items.append({
             "id": p.id,
             "content": f"{p.confirmed_starttime.strftime('%H:%M')}-{p.confirmed_endtime.strftime('%H:%M')}",
@@ -1695,9 +1710,13 @@ def api_shift_items(request):
             "end": datetime.combine(p.date, p.confirmed_endtime).isoformat(),
             "group": p.staff.id,
             "type": "range",
+            "className": period_class,
             "is_shift": True,
             "is_reg": False,
             "submission_period_id": p.submission_period_id,
+            "submission_period_type": period_type,
+            "submission_period_label": period_label,
+            "submission_period_short": period_short,
         })
 
     reg_items = []

@@ -127,6 +127,71 @@
       font-weight: bold;
     }
 
+    .shift-item-inner {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      max-width: 100%;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .shift-period-badge {
+      display: inline-block;
+      font-size: 10px;
+      line-height: 1;
+      padding: 1px 6px;
+      border-radius: 999px;
+      font-weight: 700;
+      background: transparent;
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+
+    .shift-period-badge.default {
+      border: 1px solid #62cf97;
+      color: #2f8f5b;
+    }
+
+    .shift-period-badge.help {
+      border: 1px solid #e0a800;
+      color: #9a6a00;
+    }
+
+    .shift-period-badge.temporary {
+      border: 1px solid #17a2b8;
+      color: #0f6f7f;
+    }
+
+    .shift-time-text {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* periodごとのシフト枠色 */
+    .vis-item.period-default {
+      border-color: #62cf97 !important;
+      border-width: 4px !important;
+    }
+
+    .vis-item.period-help {
+      border-color: #e0a800 !important;
+      border-width: 4px !important;
+      border-style: solid !important;
+    }
+
+    .vis-item.period-temporary {
+      border-color: #17a2b8 !important;
+      border-width: 4px !important;
+      border-style: solid !important;
+    }
+
+    .register-shift-period {
+      margin-left: 8px;
+    }
+
 
     .register-item {
       background-color: rgba(255, 165, 0, 0.6);
@@ -1093,7 +1158,33 @@ function csrfToken() {
             return;
           }
 
-          item.className = 'new-shift';
+          // 追加先periodの情報を未保存itemにも焼き込む
+          let addPeriodMeta = null;
+          if (Array.isArray(ALL_PERIODS)) {
+            const p = ALL_PERIODS.find(x => Number(x.id) === Number(addPeriodId));
+            if (p) {
+              addPeriodMeta = {
+                id: Number(p.id),
+                type: p.type || null,
+                label: p.label || '',
+                short:
+                  p.type === 'HELP' ? 'HELP' :
+                  p.type === 'temporary' ? 'TEMP' :
+                  p.type === 'default' ? 'DEFAULT' : ''
+              };
+            }
+          }
+
+          const periodItemClass = addPeriodMeta
+            ? getPeriodItemClass(addPeriodMeta.type)
+            : '';
+
+          item.className = ['new-shift', periodItemClass].filter(Boolean).join(' ');
+          item.submission_period_id = Number(addPeriodId);
+          item.submission_period_type = addPeriodMeta?.type || null;
+          item.submission_period_label = addPeriodMeta?.label || '';
+          item.submission_period_short = addPeriodMeta?.short || '';
+
 
           // 1) まず start/end を確定（mouseDown/up を最優先）
           let start, end;
@@ -1149,6 +1240,7 @@ function csrfToken() {
 
           // 5) 営業時間内へ（反対側をなるべく動かさない）
           clampAddKeepAnchor(item, movedSide);
+          item.content = `${fmtHHMM(item.start)}-${fmtHHMM(item.end)}`;
 
           onTaskBarChanged('add', item);
           callback(item);
@@ -1436,6 +1528,47 @@ function csrfToken() {
         clearRegWarningsForShift(item.id);
         scheduleRefreshSummary();
       },
+
+      template: function (item) {
+        if (!item) return '';
+
+        const id = String(item.id || '');
+
+        if (id.startsWith('wish-') || id.startsWith('reg-') || item?.is_reg) {
+          return item.content || '';
+        }
+
+        if (!item.start || !item.end) {
+          return `<div class="shift-item-inner"><span class="shift-time-text">${escapeHtml(item.content || '')}</span></div>`;
+        }
+
+        const s = new Date(item.start);
+        const e = new Date(item.end);
+        const timeText = (isNaN(+s) || isNaN(+e))
+          ? (item.content || '')
+          : `${fmtHHMM(s)}-${fmtHHMM(e)}`;
+
+        const meta = getPeriodMetaFromItem(item);
+        const badgeHtml = buildPeriodBadgeHtml(meta);
+        const durationMin = (!isNaN(+s) && !isNaN(+e))
+          ? Math.max(0, Math.round((e - s) / 60000))
+          : 0;
+
+        // 90分以上だけバッジ表示
+        const shouldShowBadge = !!badgeHtml && durationMin >= 90;
+
+        const itemClass = meta ? getPeriodItemClass(meta.type) : '';
+        const currentClassName = String(item.className || '');
+        if (itemClass && !currentClassName.includes(itemClass)) {
+          item.className = `${currentClassName} ${itemClass}`.trim();
+        }
+        return `
+          <div class="shift-item-inner">
+            ${shouldShowBadge ? badgeHtml : ''}
+            <span class="shift-time-text">${escapeHtml(timeText)}</span>
+          </div>
+        `;
+      },
       groupTemplate: function (group) {
         const wrap = document.createElement('div');
         wrap.className = 'd-flex align-items-center';
@@ -1593,6 +1726,70 @@ function csrfToken() {
     const registerResetToastCooldown = new Map(); // key: shiftId -> timestamp
     const cloneRegs = (x) => JSON.parse(JSON.stringify(x || []));
 
+    function escapeHtml(str) {
+      return String(str ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function getPeriodMetaFromItem(item) {
+      if (!item) return null;
+
+      const directType = item.submission_period_type || null;
+      const directLabel = item.submission_period_label || '';
+      const directShort = item.submission_period_short || '';
+      const pid = item.submission_period_id != null ? Number(item.submission_period_id) : null;
+
+      if (directType || directLabel || directShort) {
+        return {
+          id: pid,
+          type: directType,
+          label: directLabel,
+          short: directShort || (
+            directType === 'HELP' ? 'HELP' :
+            directType === 'temporary' ? 'TEMP' :
+            directType === 'default' ? 'DEFAULT' : ''
+          )
+        };
+      }
+
+      if (pid == null || !Array.isArray(ALL_PERIODS)) return null;
+      const p = ALL_PERIODS.find(x => Number(x.id) === pid);
+      if (!p) return null;
+
+      return {
+        id: pid,
+        type: p.type || null,
+        label: p.label || '',
+        short:
+          p.type === 'HELP' ? 'HELP' :
+          p.type === 'temporary' ? 'TEMP' :
+          p.type === 'default' ? 'DEFAULT' : ''
+      };
+    }
+
+    function getPeriodBadgeClass(periodType) {
+      if (periodType === 'HELP') return 'help';
+      if (periodType === 'temporary') return 'temporary';
+      return 'default';
+    }
+
+    function getPeriodItemClass(periodType) {
+      if (periodType === 'HELP') return 'period-help';
+      if (periodType === 'temporary') return 'period-temporary';
+      return 'period-default';
+    }
+
+    function buildPeriodBadgeHtml(meta) {
+      if (!meta || !meta.short) return '';
+      const cls = getPeriodBadgeClass(meta.type);
+      const title = meta.label ? `${meta.short}｜${meta.label}` : meta.short;
+      return `<span class="shift-period-badge ${cls}" title="${escapeHtml(title)}">${escapeHtml(meta.short)}</span>`;
+    }
+
     function minutesBetween(dateA, dateB) {
       const a = (dateA instanceof Date) ? dateA : new Date(dateA);
       const b = (dateB instanceof Date) ? dateB : new Date(dateB);
@@ -1616,8 +1813,16 @@ function csrfToken() {
       const startTime = new Date(shiftItem.start).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
       const endTime = new Date(shiftItem.end).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
       const staffName = (groups.get && groups.get(shiftItem.group)?.name) || '';
-      $('#registerShiftInfo').text(`${staffName ? staffName + '｜' : ''}${startTime} 〜 ${endTime}`);
+      const periodMeta = getPeriodMetaFromItem(shiftItem);
+      const periodBadgeHtml = buildPeriodBadgeHtml(periodMeta);
+      const periodLabelHtml = (periodMeta && periodMeta.label)
+        ? `<span class="register-shift-period text-muted">${escapeHtml(periodMeta.label)}</span>`
+        : '';
 
+      $('#registerShiftInfo').html(
+        `${staffName ? escapeHtml(staffName) + '｜' : ''}${escapeHtml(startTime)} 〜 ${escapeHtml(endTime)} ` +
+        `${periodBadgeHtml}${periodLabelHtml}`
+      );
 
       const draft = registersDraftByShift.get(String(itemId));
       if (draft && draft.length >= 0) {
@@ -2303,12 +2508,6 @@ function csrfToken() {
 
       host.appendChild(el);
       setTimeout(() => { el.remove(); }, 5000);
-    }
-
-    function escapeHtml(s) {
-      return String(s).replace(/[&<>"']/g, c => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-      }[c]));
     }
 
     // 保存ボタン
