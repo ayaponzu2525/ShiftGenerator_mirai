@@ -1681,13 +1681,6 @@ def api_shift_items(request):
         confirmed_endtime__isnull=False
     )
 
-    # --- 希望シフト ---
-    wish_preferences = ShiftPreference.objects.filter(
-        date=target_date,
-        starttime__isnull=False,
-        endtime__isnull=False
-    )
-
     # --- レジ割当（★ここ重要：日付で絞る） ---
     register_assignments = ShiftRegisterAssignment.objects.filter(
         shift__date=target_date
@@ -1725,20 +1718,72 @@ def api_shift_items(request):
             "is_shift": False,
             "is_reg": True,
         })
+        
+    # --- 希望背景（提出 snapshot ベース / その日に重なる全 period） ---
+    # default -> 緑
+    # HELP    -> 黄
+    # temporary -> 水色
+    overlapping_submissions = (
+        ShiftSubmission.objects
+        .select_related("period", "staff")
+        .filter(
+            staff__in=staff,
+            period__start_date__lte=target_date,
+            period__end_date__gte=target_date,
+        )
+        .order_by("period__start_date", "period_id", "staff_id", "-updated_at", "-id")
+    )
 
     wish_items = []
-    for w in wish_preferences:
-        wish_items.append({
-            "id": f"wish-{w.id}",
-            "content": "",
-            "start": datetime.combine(w.date, w.starttime).isoformat(),
-            "end": datetime.combine(w.date, w.endtime).isoformat(),
-            "group": w.staff.id,
-            "type": "background",
-            "className": "wish-item",
-            "is_shift": False,
-            "is_reg": False,
-        })
+    for sub in overlapping_submissions:
+        snap = sub.snapshot or []
+
+        if sub.period.type == "HELP":
+            wish_class = "wish-item wish-item-help"
+        elif sub.period.type == "temporary":
+            wish_class = "wish-item wish-item-temporary"
+        else:
+            wish_class = "wish-item wish-item-default"
+
+        for row in snap:
+            d_str = row.get("date")
+            st = row.get("starttime")
+            et = row.get("endtime")
+            holiday_id = row.get("holiday_id")
+
+            if not d_str:
+                continue
+
+            d = parse_date(d_str)
+            if d != target_date:
+                continue
+
+            # 休み系は背景帯にしない
+            if holiday_id:
+                continue
+
+            if not st or not et:
+                continue
+
+            try:
+                st_obj = time.fromisoformat(st)
+                et_obj = time.fromisoformat(et)
+            except ValueError:
+                continue
+
+            wish_items.append({
+                "id": f"wish-snap-{sub.staff_id}-{sub.period_id}-{d.isoformat()}-{st}-{et}",
+                "content": "",
+                "start": datetime.combine(d, st_obj).isoformat(),
+                "end": datetime.combine(d, et_obj).isoformat(),
+                "group": sub.staff_id,
+                "type": "background",
+                "className": wish_class,
+                "is_shift": False,
+                "is_reg": False,
+                "period_type": sub.period.type,
+                "submission_period_id": sub.period_id,
+            })
 
     return JsonResponse({
         "date": target_date.strftime("%Y-%m-%d"),
@@ -1898,7 +1943,12 @@ def bulk_reset_preview(request):
     if not staff_qs.exists():
         return JsonResponse({"success": False, "error": "対象スタッフが見つかりません。"}, status=404)
 
-    submissions = ShiftSubmission.objects.filter(period=period, staff__in=staff_qs)
+    submissions = ShiftSubmission.objects.filter(
+        staff__in=staff_qs,
+        period__start_date__lte=end,
+        period__end_date__gte=start,
+    ).select_related("period", "staff")
+
     sub_cnt = submissions.count()
     
     # ① 削除対象の確定シフト数（DBから正確に）
@@ -1917,6 +1967,7 @@ def bulk_reset_preview(request):
     wishes = 0
     holiday_rows = 0
     time_rows = 0
+    seen = set()  # (staff_id, date, start, end, period_id)
 
     for sub in submissions:
         snap = sub.snapshot or []
@@ -1924,13 +1975,20 @@ def bulk_reset_preview(request):
             d = parse_date(row.get("date")) if row.get("date") else None
             if not d or d < start or d > end:
                 continue
+
             # holidayは確定にはコピーしない前提（= wishesに数えない）
             if row.get("holiday_id"):
                 holiday_rows += 1
                 continue
-            
-            if row.get("starttime") and row.get("endtime"):
+
+            st = row.get("starttime")
+            et = row.get("endtime")
+            if st and et:
                 time_rows += 1
+                key = (sub.staff_id, d.isoformat(), st, et, sub.period_id)
+                if key in seen:
+                    continue
+                seen.add(key)
                 wishes += 1
 
     return JsonResponse({"success": True,
@@ -2005,11 +2063,20 @@ def bulk_reset_to_wish(request):
     warnings = []
     total_reset = 0
 
-    # snapshot を staffごとに先に取っておく（N+1を減らす）
-    submissions = {
-        s.staff_id: s
-        for s in ShiftSubmission.objects.filter(period=period, staff__in=staff_qs)
-    }
+    # 対象範囲に重なる全募集期間の提出 snapshot を staffごとに取っておく
+    # （default / help / temporary をまとめて反映対象にする）
+    submissions_by_staff = {}
+    for s in (
+        ShiftSubmission.objects
+        .select_related("period", "staff")
+        .filter(
+            staff__in=staff_qs,
+            period__start_date__lte=end,
+            period__end_date__gte=start,
+        )
+        .order_by("staff_id", "period__start_date", "id")
+    ):
+        submissions_by_staff.setdefault(s.staff_id, []).append(s)
 
     # 期間内の確定を全部クリア（スタッフ単位でまとめてやる）
     with transaction.atomic():
@@ -2047,31 +2114,43 @@ def bulk_reset_to_wish(request):
 
         # ④ staffごとに snapshot から確定を復元
         for staff in staff_qs:
-            sub = submissions.get(staff.id)
-            if not sub or not sub.snapshot:
+            staff_submissions = submissions_by_staff.get(staff.id, [])
+            if not staff_submissions:
                 warnings.append(f"{staff.name}：提出が無い（snapshot無し）ためスキップ")
                 continue
 
             # snapshot から、対象範囲内の「シフト（holidayなし）」だけ抽出
+            # どの募集期間の snapshot だったかも保持する
             items = []
-            for row in sub.snapshot:
-                d_str = row.get("date")
-                st = row.get("starttime")
-                et = row.get("endtime")
-                holiday_id = row.get("holiday_id")
+            seen = set()  # 重複防止: (date, start, end, period_id)
 
-                if not d_str:
-                    continue
-                d = parse_date(d_str)
-                if not d or d < start or d > end:
+            for sub in staff_submissions:
+                if not sub.snapshot:
                     continue
 
-                # holiday は確定にはコピーしない（確定削除＝休みは表示ロジックで表現）
-                if holiday_id:
-                    continue
+                for row in sub.snapshot:
+                    d_str = row.get("date")
+                    st = row.get("starttime")
+                    et = row.get("endtime")
+                    holiday_id = row.get("holiday_id")
 
-                if st and et:
-                    items.append((d, st, et))
+                    if not d_str:
+                        continue
+
+                    d = parse_date(d_str)
+                    if not d or d < start or d > end:
+                        continue
+
+                    # holiday は確定にはコピーしない
+                    if holiday_id:
+                        continue
+
+                    if st and et:
+                        key = (d.isoformat(), st, et, sub.period_id)
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        items.append((d, st, et, sub.period))
 
             if not items:
                 warnings.append(f"{staff.name}：期間内に提出シフトが無い（holidayのみ/空）")
@@ -2079,18 +2158,38 @@ def bulk_reset_to_wish(request):
 
             # 同日2件まで想定：既存の希望行に一致があればそこにconfirmedを付与、
             # 無ければ confirmed-only 行を新規作成して復元
-            for (d, st_str, et_str) in items:
+            for (d, st_str, et_str, source_period) in items:
                 # "HH:MM" -> time
                 st_time = time.fromisoformat(st_str)
                 et_time = time.fromisoformat(et_str)
 
-                # まず同じ希望行（start/end一致）があればそれを使う
+                # まず同じ募集期間の希望行を優先して探す
                 target = ShiftPreference.objects.filter(
                     staff=staff,
                     date=d,
                     starttime=st_time,
                     endtime=et_time,
+                    submission_period=source_period,
                 ).first()
+
+                # 無ければ period未設定の希望行を使う
+                if not target:
+                    target = ShiftPreference.objects.filter(
+                        staff=staff,
+                        date=d,
+                        starttime=st_time,
+                        endtime=et_time,
+                        submission_period__isnull=True,
+                    ).first()
+
+                # さらに無ければ periodを問わず一致する希望行を使う
+                if not target:
+                    target = ShiftPreference.objects.filter(
+                        staff=staff,
+                        date=d,
+                        starttime=st_time,
+                        endtime=et_time,
+                    ).first()
                 
                 JP = ["月", "火", "水", "木", "金", "土", "日"]
 
@@ -2102,14 +2201,13 @@ def bulk_reset_to_wish(request):
                 if target:
                     target.confirmed_starttime = st_time
                     target.confirmed_endtime = et_time
-                    target.submission_period = period
+                    target.submission_period = source_period
                     target.save(update_fields=[
                         "confirmed_starttime",
                         "confirmed_endtime",
                         "submission_period",
                     ])
                 else:
-                    # 希望が消されてても復元できるよう confirmed-only 行を作る
                     ShiftPreference.objects.create(
                         staff=staff,
                         date=d,
@@ -2119,7 +2217,7 @@ def bulk_reset_to_wish(request):
                         holiday=None,
                         confirmed_starttime=st_time,
                         confirmed_endtime=et_time,
-                        submission_period=period,
+                        submission_period=source_period,
                     )
 
                 total_reset += 1

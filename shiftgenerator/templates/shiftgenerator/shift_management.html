@@ -92,13 +92,32 @@
       text-decoration: none;
     }
 
-    /* 希望シフトは薄い青色、点線・背景色など */
+    /* snapshot由来の希望背景 */
     .vis-item.wish-item {
-      background-color: rgba(110, 220, 160, 0.17) !important;
-      border: 2px dashed #62cf97 !important;
-      z-index: 0;
+            z-index: 0;
       /* 一番奥に */
     }
+
+    .vis-item.wish-item-default {
+      background-color: rgba(110, 220, 160, 0.17) !important;
+      border: 2px dashed #62cf97 !important;
+    }
+
+    .vis-item.wish-item-help {
+      background-color: rgba(255, 193, 7, 0.16) !important;
+      border: 2px dashed #e0a800 !important;
+    }
+
+   .vis-item.wish-item-temporary {
+      background-color: rgba(23, 162, 184, 0.14) !important;
+      border: 2px dashed #17a2b8 !important;
+    }
+
+    .vis-item.vis-background.wish-item,
+    .vis-item.vis-range.wish-item {
+       z-index: 0;
+    }
+
 
     .vis-item.new-shift {
       background-color: #ffc107 !important;
