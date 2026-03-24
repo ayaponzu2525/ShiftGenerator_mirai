@@ -577,6 +577,7 @@ def save_shift_and_registers(request):
         with transaction.atomic():
             touched_shift_ids = set()
             shift_map = {}
+            moved_shift_id_map = {}   # old_shift_id -> new_shift_id
 
             for change in shift_changes:
                 action = change.get('action')
@@ -665,9 +666,10 @@ def save_shift_and_registers(request):
                     touched_shift_ids.add(shift.id)
 
                     if new_staff is not None and shift.staff_id != new_staff:
-                        shift.confirmed_starttime = None
-                        shift.confirmed_endtime = None
-                        shift.save(update_fields=['confirmed_starttime', 'confirmed_endtime'])
+                        old_shift_id = shift.id
+
+                        # 旧shiftの既存レジは引き継がず削除
+                        ShiftRegisterAssignment.objects.filter(shift_id=shift.id).delete()
 
                         day_obj = get_day_obj_safe(shift_date)
                         new_shift = ShiftPreference.objects.create(
@@ -680,6 +682,31 @@ def save_shift_and_registers(request):
                         )
                         shift_map[new_shift.id] = new_shift
                         touched_shift_ids.add(new_shift.id)
+                        moved_shift_id_map[old_shift_id] = new_shift.id
+
+                        # 元shiftは削除しない。confirmedだけ外す
+                        shift.confirmed_starttime = None
+                        shift.confirmed_endtime = None
+                        shift.submission_period = None
+                        shift.save(update_fields=[
+                            'confirmed_starttime',
+                            'confirmed_endtime',
+                            'submission_period',
+                        ])
+
+                        shift_map[shift.id] = shift
+                        touched_shift_ids.add(shift.id)
+
+                        # old shift に対して送られてきたレジpayloadは new shift へ付け替える
+                        old_key = str(old_shift_id)
+                        new_key = str(new_shift.id)
+
+                        if old_key in registers_payload:
+                            regs = registers_payload.pop(old_key) or []
+                            registers_payload[new_key] = regs
+                        else:
+                            # modal未保存なら old shift 側は空配列で削除扱い
+                            registers_payload[old_key] = []
                     else:
                         shift.confirmed_starttime = start_time
                         shift.confirmed_endtime = end_time
@@ -692,7 +719,7 @@ def save_shift_and_registers(request):
                             'submission_period',
                             'day_of_week',
                             'date',
-                        ])
+                    ])
 
                 elif action == 'remove' and item_id is not None:
                     try:
@@ -752,6 +779,18 @@ def save_shift_and_registers(request):
                         }
                         return JsonResponse({'success': False, 'error': msg, 'conflicts': [conflict]})
 
+            for old_shift_id, new_shift_id in moved_shift_id_map.items():
+                old_key = str(old_shift_id)
+                new_key = str(new_shift_id)
+                if old_key in registers_payload:
+                    regs = registers_payload.pop(old_key) or []
+                    if new_key in registers_payload:
+                        # 基本は new_key 優先。空なら old を採用
+                        if not registers_payload[new_key]:
+                            registers_payload[new_key] = regs
+                    else:
+                        registers_payload[new_key] = regs
+                        
             register_shift_ids = set()
             for key in registers_payload.keys():
                 try:
@@ -1665,6 +1704,7 @@ def api_shift_items(request):
             "type": "range",
             "is_shift": True,
             "is_reg": False,
+            "submission_period_id": p.submission_period_id,
         })
 
     reg_items = []
@@ -1727,18 +1767,28 @@ def shift_management(request):
     # period一覧（とりあえず active を並べる）
     periods = ShiftSubmissionPeriod.objects.all().order_by('-start_date', '-id')
 
-    # ★追加：選択中period（URL ?period_id=xx か、なければ「今日を含むactive」→なければ先頭）
+    # 選択中period（URL ?period_id=xx があればそれを優先。
+    # なければ「表示中の日付 target_date に属する default > HELP > temporary > 先頭」）
     pid = request.GET.get('period_id')
     selected_period_id = None
+
     if pid and pid.isdigit():
         selected_period_id = int(pid)
     else:
-        today = localdate()
-        p = periods.filter(start_date__lte=today, end_date__gte=today).first()
-        if p:
-            selected_period_id = p.id
-        else:
-            selected_period_id = periods.first().id if periods.exists() else None
+        day_periods = periods.filter(
+            start_date__lte=target_date,
+            end_date__gte=target_date,
+        )
+
+        p = day_periods.filter(type='default').order_by('-start_date', '-id').first()
+        if not p:
+            p = day_periods.filter(type='HELP').order_by('start_time', '-id').first()
+        if not p:
+            p = day_periods.filter(type='temporary').order_by('-start_date', '-id').first()
+        if not p:
+            p = periods.first() if periods.exists() else None
+
+        selected_period_id = p.id if p else None
 
     # --- 確定シフト（編集対象） ---
     preferences = ShiftPreference.objects.filter(
@@ -1980,7 +2030,7 @@ def bulk_reset_to_wish(request):
             ShiftRegisterAssignment.objects.filter(shift_id__in=shift_ids).delete()
 
         # ② confirmed を全部クリア
-        confirmed_qs.update(confirmed_starttime=None, confirmed_endtime=None)
+        confirmed_qs.update(confirmed_starttime=None, confirmed_endtime=None, submission_period=None)
 
         # ③ “confirmed-only で作ったゴミ行” を先に掃除（空行を消す）
         #    ※希望(start/end)もholidayもなく、confirmedも空になった行が残るので削除
@@ -2052,7 +2102,12 @@ def bulk_reset_to_wish(request):
                 if target:
                     target.confirmed_starttime = st_time
                     target.confirmed_endtime = et_time
-                    target.save(update_fields=["confirmed_starttime", "confirmed_endtime"])
+                    target.submission_period = period
+                    target.save(update_fields=[
+                        "confirmed_starttime",
+                        "confirmed_endtime",
+                        "submission_period",
+                    ])
                 else:
                     # 希望が消されてても復元できるよう confirmed-only 行を作る
                     ShiftPreference.objects.create(
@@ -2064,6 +2119,7 @@ def bulk_reset_to_wish(request):
                         holiday=None,
                         confirmed_starttime=st_time,
                         confirmed_endtime=et_time,
+                        submission_period=period,
                     )
 
                 total_reset += 1
