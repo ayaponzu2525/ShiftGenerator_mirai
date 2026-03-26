@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+  <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap">
+    <h2 class="mb-2 mb-md-0">提出履歴</h2>
+    <div>
+      <a href="{% url 'shiftgenerator:shift-form' %}" class="btn btn-outline-primary">
+        シフト希望カレンダーに戻る
+      </a>
+    </div>
+  </div>
+
+  {% if submissions %}
+    <div class="card shadow-sm">
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-striped table-hover mb-0">
+            <thead class="thead-light">
+              <tr>
+                <th>募集期間</th>
+                <th>提出日時</th>
+                <th>提出状態</th>
+                <th>コメント</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for submission in submissions %}
+              <tr>
+                <td>
+                  {% if submission.period.label %}
+                    {{ submission.period.label }}
+                  {% else %}
+                    {{ submission.period.start_date }}〜{{ submission.period.end_date }}
+                  {% endif %}
+                </td>
+                <td>{{ submission.updated_at|date:"Y-m-d H:i" }}</td>
+                <td>
+                  {% if submission.submission_status == "初回" %}
+                    <span class="badge badge-success">{{ submission.submission_status }}</span>
+                  {% elif submission.submission_status == "再提出" %}
+                    <span class="badge badge-warning text-dark">{{ submission.submission_status }}</span>
+                  {% else %}
+                    <span class="badge badge-secondary">{{ submission.submission_status }}</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {{ submission.comment|default:"（なし）"|truncatechars:40 }}
+                </td>
+                <td class="text-nowrap">
+                  <a href="{% url 'shiftgenerator:staff-submission-detail' submission.id %}" class="btn btn-sm btn-outline-primary">
+                    詳細
+                  </a>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  {% else %}
+    <div class="alert alert-info">
+      まだ提出履歴はありません。
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

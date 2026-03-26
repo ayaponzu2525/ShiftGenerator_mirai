@@ -438,7 +438,12 @@
                             placeholder="伝えたいことがあれば記入"></textarea>
                 </div>
 
+                <div class="mt-3 d-flex flex-wrap" style="gap: 8px;">
                 <button type="submit" class="btn btn-primary mt-3">この内容で提出</button>
+                <a href="{% url 'shiftgenerator:staff-submissions-list' %}" class="btn btn-outline-secondary">
+                    提出済み内容を確認
+                </a>
+                </div>
                 </form>
 
             </div>
@@ -1190,33 +1195,43 @@ function rebuildRegButtons() {// ✅登録ボタンは毎回再構築（確定�
 
     // ★イベントの取得はすべてここで行う（PCもスマホもここを通す）
     datesSet: async (info) => {
-    if (!isMobileNow()) return;
-
-    const start = info.startStr.slice(0,10);
-    const end   = info.endStr.slice(0,10);
-
-    // ① イベント取得
-    cachedEvents = await fetchEventsRange(start, end);
-
-    // ② ★確定モードのときだけ meta も取得（ここが2-3）
-    if (isViewingConfirmed()) {
     try {
-        periodMetaCache = await fetchPeriodMetaRange(start, end);
-    } catch (e) {
+        const start = info.startStr.slice(0, 10);
+        const end   = info.endStr.slice(0, 10);
+
+        const events = await fetchEventsRange(start, end);
+
+        // 確定表示時だけ period meta 更新
+        if (isViewingConfirmed()) {
+        try {
+            periodMetaCache = await fetchPeriodMetaRange(start, end);
+        } catch (e) {
+            periodMetaCache = null;
+        }
+        } else {
         periodMetaCache = null;
+        }
+
+        // キャッシュ更新
+        cachedEvents = events;
+        window.__cachedEvents = events;
+
+        // カレンダー更新
+        window.calendar.removeAllEvents();
+        window.calendar.addEventSource(events);
+
+        // 装飾更新
+        buildDayTypeMap(events);
+        requestAnimationFrame(() => {
+        rerenderAllDayDecorations();
+        rebuildRegButtons();
+        window.calendar.updateSize?.();
+        });
+
+        updateGlobalPublishedInfo(events);
+    } catch (e) {
+        console.error('datesSet refresh failed:', e);
     }
-    } else {
-    periodMetaCache = null;
-    }
-
-    window.__cachedEvents = cachedEvents;
-    buildDayTypeMap(cachedEvents);
-
-    window.calendar.removeAllEvents();
-    window.calendar.addEventSource(cachedEvents);
-
-    requestAnimationFrame(() => rerenderAllDayDecorations());
-    updateGlobalPublishedInfo(cachedEvents);
     },
 
     // 初期イベント（PC向け）
@@ -1368,7 +1383,8 @@ function rebuildRegButtons() {// ✅登録ボタンは毎回再構築（確定�
   window.calendar.render();
 
   // ✅ 追加：復元したトグル状態でイベントを取り直す
-  updateCalendar().then(() => rebuildRegButtons());
+  // 初回の明示再取得は不要にする
+    requestAnimationFrame(() => rebuildRegButtons());
     mq.addEventListener("change", async () => {
     // いったんボトムシート閉じる
     if (!isMobileNow()) window.closeBottomSheet?.();

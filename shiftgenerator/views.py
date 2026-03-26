@@ -22,6 +22,7 @@ import pytz
 import json
 import traceback
 from datetime import datetime, date, timedelta, time
+from collections import defaultdict
 import csv
 from django.views.decorators.http import require_POST, require_GET
 
@@ -2318,6 +2319,68 @@ def shift_events_api(request):
     return JsonResponse(events, safe=False)
 
 @login_required
+def staff_submissions_list(request):
+    staff_profile = getattr(request.user, 'staff_profile', None)
+    if not staff_profile:
+        return HttpResponseForbidden('スタッフ情報が見つかりません。')
+
+    submissions = (
+        ShiftSubmission.objects
+        .filter(staff=staff_profile)
+        .select_related('period')
+        .order_by('-updated_at', '-id')
+    )
+
+    return render(request, 'shiftgenerator/submissions_list.html', {
+        'submissions': submissions,
+    })
+
+
+@login_required
+def staff_submission_detail(request, submission_id):
+    staff_profile = getattr(request.user, 'staff_profile', None)
+    if not staff_profile:
+        return HttpResponseForbidden('スタッフ情報が見つかりません。')
+
+    submission = get_object_or_404(
+        ShiftSubmission.objects.select_related('period', 'staff'),
+        id=submission_id,
+        staff=staff_profile,   # ← 他人の提出を見せない
+    )
+
+    snapshot_rows = submission.snapshot or []
+
+    holiday_map = {
+        h.id: h.holiday_name
+        for h in Holiday.objects.all()
+    }
+
+    normalized_rows = []
+    for row in snapshot_rows:
+        holiday_id = row.get('holiday_id')
+        normalized_rows.append({
+            'date': row.get('date'),
+            'starttime': row.get('starttime'),
+            'endtime': row.get('endtime'),
+            'holiday_id': holiday_id,
+            'holiday_name': holiday_map.get(holiday_id, '') if holiday_id else '',
+        })
+
+    normalized_rows.sort(
+        key=lambda x: (
+            x['date'] or '',
+            x['starttime'] or '99:99',
+            x['endtime'] or '99:99',
+            x['holiday_name'] or '',
+        )
+    )
+
+    return render(request, 'shiftgenerator/submission_detail.html', {
+        'submission': submission,
+        'snapshot_rows': normalized_rows,
+    })
+
+@login_required
 def shift_form(request):
     user = request.user
     staff_profile = getattr(user, 'staff_profile', None)
@@ -2444,30 +2507,44 @@ def submit_shift(request):
         period_id = request.POST.get("period_id")
         if not period_id:
             return JsonResponse({'success': False, 'error': '提出期間を選択してください。'})
+
         period = get_object_or_404(ShiftSubmissionPeriod, id=period_id, is_active=True)
 
-        # シフト希望一覧をdictリスト化、日付・時間はすべてisoformat文字列に変換
-        shift_qs = ShiftPreference.objects.filter(
+        # 期間内の全レコードを取得（未完成行も含める）
+        all_prefs_qs = ShiftPreference.objects.filter(
             staff=staff_profile,
             date__range=(period.start_date, period.end_date)
-        ).filter(
-            Q(holiday__isnull=False) | (Q(starttime__isnull=False) & Q(endtime__isnull=False))
         ).order_by('date', 'starttime', 'endtime', 'holiday_id')
-                
-        from collections import defaultdict
 
-        def _validate_shift_prefs_for_submit(shift_qs):
+        def _validate_shift_prefs_for_submit(all_prefs_qs, period):
             errors = []
             by_date = defaultdict(list)
 
-            for pref in shift_qs:
+            for pref in all_prefs_qs:
                 by_date[pref.date].append(pref)
 
-            for d, items in sorted(by_date.items(), key=lambda x: x[0]):
-                holidays = [x for x in items if x.holiday_id is not None]
-                normals = [x for x in items if x.holiday_id is None]  # ← この時点で start/end は必ず両方ある想定
-
+            d = period.start_date
+            while d <= period.end_date:
+                items = by_date.get(d, [])
                 d_str = d.strftime('%Y-%m-%d')
+
+                holidays = [x for x in items if x.holiday_id is not None]
+                normals = [
+                    x for x in items
+                    if x.holiday_id is None and x.starttime is not None and x.endtime is not None
+                ]
+                incomplete = [
+                    x for x in items
+                    if x.holiday_id is None and ((x.starttime is None) != (x.endtime is None))
+                ]
+
+                if not items:
+                    errors.append(f"{d_str}：未入力です。休みまたは予定を登録してください。")
+                    d += timedelta(days=1)
+                    continue
+
+                if incomplete:
+                    errors.append(f"{d_str}：開始時間または終了時間が未入力の予定があります。")
 
                 if len(holidays) >= 2:
                     errors.append(f"{d_str}：休みが複数登録されています（{len(holidays)}件）")
@@ -2478,14 +2555,17 @@ def submit_shift(request):
                 if len(normals) > 2:
                     errors.append(f"{d_str}：予定が{len(normals)}件あります（最大2件まで）")
 
+                if not holidays and not normals:
+                    errors.append(f"{d_str}：有効な入力がありません。休みまたは予定を登録してください。")
+
                 normals_sorted = sorted(normals, key=lambda x: (x.starttime, x.endtime))
 
-                # 時刻逆転（最終防衛）
                 for x in normals_sorted:
                     if x.endtime <= x.starttime:
-                        errors.append(f"{d_str}：開始/終了時刻が不正です（{x.starttime.strftime('%H:%M')}〜{x.endtime.strftime('%H:%M')}）")
+                        errors.append(
+                            f"{d_str}：開始/終了時刻が不正です（{x.starttime.strftime('%H:%M')}〜{x.endtime.strftime('%H:%M')}）"
+                        )
 
-                # 重なりチェック（1回だけ）
                 prev = None
                 for x in normals_sorted:
                     if prev and prev.endtime > x.starttime:
@@ -2495,15 +2575,16 @@ def submit_shift(request):
                         )
                     prev = x
 
+                d += timedelta(days=1)
+
             return errors
 
-
-        # ★締切チェック（念のため）
+        # 締切チェック
         if period.auto_close_date and timezone.now() > period.auto_close_date:
             return JsonResponse({'success': False, 'error': '提出期限を過ぎています。'}, status=200)
 
-        # ★提出時の最終整合チェック（詳細つき）
-        validation_errors = _validate_shift_prefs_for_submit(shift_qs)
+        # 提出時の最終整合チェック
+        validation_errors = _validate_shift_prefs_for_submit(all_prefs_qs, period)
         if validation_errors:
             return JsonResponse({
                 'success': False,
@@ -2511,8 +2592,15 @@ def submit_shift(request):
                 'validation_errors': validation_errors
             }, status=200)
 
+        # snapshot には「有効行」だけ保存
         current_prefs = []
-        for pref in shift_qs:
+        for pref in all_prefs_qs:
+            is_holiday = pref.holiday_id is not None
+            has_time_range = pref.starttime is not None and pref.endtime is not None
+
+            if not is_holiday and not has_time_range:
+                continue
+
             current_prefs.append({
                 'date': pref.date.isoformat() if pref.date else None,
                 'starttime': pref.starttime.strftime('%H:%M') if pref.starttime else None,
@@ -2522,17 +2610,13 @@ def submit_shift(request):
                 'holiday_id': pref.holiday_id,
             })
 
-        prev_submission = ShiftSubmission.objects.filter(staff=staff_profile, period=period).first()
-        
-        if not shift_qs.exists():
-            return JsonResponse({
-                'success': False,
-                'error': '提出期間内に希望が1件もありません。'
-            }, status=200)
+        prev_submission = ShiftSubmission.objects.filter(
+            staff=staff_profile,
+            period=period
+        ).first()
 
         if prev_submission and prev_submission.snapshot:
             if current_prefs == prev_submission.snapshot:
-                # 完全一致なら「変更なし」
                 return JsonResponse({
                     'success': False,
                     'no_change': True,
@@ -2542,14 +2626,12 @@ def submit_shift(request):
         comment = request.POST.get("period_comment", "")
 
         if prev_submission:
-            # 既存がある → 更新（再提出）
             prev_submission.comment = comment
             prev_submission.submission_status = "再提出"
             prev_submission.snapshot = current_prefs
             prev_submission.save(update_fields=["comment", "submission_status", "snapshot", "updated_at"])
             status = "再提出"
         else:
-            # 既存がない → 作成（初回）
             ShiftSubmission.objects.create(
                 staff=staff_profile,
                 period=period,
@@ -2566,7 +2648,6 @@ def submit_shift(request):
         })
 
     return JsonResponse({'success': False, 'error': '無効なリクエストです。'})
-
 
 @login_required
 def shift_detail(request, shift_id):
