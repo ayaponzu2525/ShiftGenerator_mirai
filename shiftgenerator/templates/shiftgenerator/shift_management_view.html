@@ -473,7 +473,15 @@
               data-name="{{ staff.name|lower }}"
               data-state="{% if submission %}{{ submission.submission_status }}{% else %}未提出{% endif %}"
               data-updated="{% if submission %}{{ submission.updated_at|date:'U' }}{% else %}0{% endif %}">
-              <td>{{ staff.name }}</td>
+              <td>
+                {% if submission %}
+                  <a href="{% url 'shiftgenerator:staff-submission-detail' submission.id %}?from=management">
+                    {{ staff.name }}
+                  </a>
+                {% else %}
+                  {{ staff.name }}
+                {% endif %}
+              </td>
               <td>
                 {% if submission %}
                   {% if submission.submission_status == "初回" %}

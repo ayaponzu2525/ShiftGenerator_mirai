@@ -1157,6 +1157,14 @@ def shift_management_view(request):
     selected_period = None
     submissions = {}
     period_id = request.GET.get("period_id")
+    if not period_id:
+        selected_period = ShiftSubmissionPeriod.objects.filter(
+            is_active=True
+        ).order_by('-start_date').first()
+
+        if selected_period:
+            period_id = selected_period.id
+        
     if period_id:
         selected_period = get_object_or_404(ShiftSubmissionPeriod, id=period_id)
         print("SELECTED:", selected_period.id, selected_period.is_active)
@@ -2338,15 +2346,24 @@ def staff_submissions_list(request):
 
 @login_required
 def staff_submission_detail(request, submission_id):
-    staff_profile = getattr(request.user, 'staff_profile', None)
-    if not staff_profile:
-        return HttpResponseForbidden('スタッフ情報が見つかりません。')
 
-    submission = get_object_or_404(
-        ShiftSubmission.objects.select_related('period', 'staff'),
-        id=submission_id,
-        staff=staff_profile,   # ← 他人の提出を見せない
-    )
+    # 管理者は全件見れる
+    if request.user.is_superuser:
+        submission = get_object_or_404(
+            ShiftSubmission.objects.select_related('period', 'staff'),
+            id=submission_id,
+        )
+
+    else:
+        staff_profile = getattr(request.user, 'staff_profile', None)
+        if not staff_profile:
+            return HttpResponseForbidden('スタッフ情報が見つかりません。')
+
+        submission = get_object_or_404(
+            ShiftSubmission.objects.select_related('period', 'staff'),
+            id=submission_id,
+            staff=staff_profile,
+        )
 
     snapshot_rows = submission.snapshot or []
 
@@ -2378,6 +2395,7 @@ def staff_submission_detail(request, submission_id):
     return render(request, 'shiftgenerator/submission_detail.html', {
         'submission': submission,
         'snapshot_rows': normalized_rows,
+        'from_management': request.GET.get('from') == 'management',
     })
 
 @login_required

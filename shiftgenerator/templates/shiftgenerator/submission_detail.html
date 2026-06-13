@@ -4,12 +4,22 @@
   <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap">
     <h2 class="mb-2 mb-md-0">提出内容詳細</h2>
     <div>
-      <a href="{% url 'shiftgenerator:staff-submissions-list' %}" class="btn btn-outline-secondary mr-2">
-        履歴一覧に戻る
-      </a>
-      <a href="{% url 'shiftgenerator:shift-form' %}" class="btn btn-outline-primary">
-        シフト希望カレンダーへ
-      </a>
+      {% if from_management %}
+        <a href="{% url 'shiftgenerator:shift-management-view' %}?period_id={{ submission.period.id }}"
+          class="btn btn-outline-secondary">
+          提出状況一覧に戻る
+        </a>
+      {% else %}
+        <a href="{% url 'shiftgenerator:staff-submissions-list' %}"
+          class="btn btn-outline-secondary mr-2">
+          履歴一覧
+        </a>
+
+        <a href="{% url 'shiftgenerator:shift-form' %}"
+          class="btn btn-outline-primary">
+          シフト希望カレンダーに戻る
+        </a>
+      {% endif %}
     </div>
   </div>
 
